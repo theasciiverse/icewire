@@ -562,6 +562,20 @@ fn help(f: &mut Frame, app: &App, area: Rect) {
 
 /// Draws one part box. `off` maps bench cells to the screen.
 #[allow(clippy::too_many_arguments)]
+/// Each category's box lines, so parts tell apart by shape as well as
+/// colour, and none uses the wires' thin line: sensors rounded, logic
+/// double, drive heavy, weapons heavy top and bottom with thin sides.
+/// Corners top-left, top-right, bottom-left, bottom-right, then the
+/// horizontal and the vertical line.
+fn box_lines(c: Category) -> [&'static str; 6] {
+    match c {
+        Category::Sensor => ["╭", "╮", "╰", "╯", "─", "│"],
+        Category::Logic => ["╔", "╗", "╚", "╝", "═", "║"],
+        Category::Drive => ["┏", "┓", "┗", "┛", "━", "┃"],
+        Category::Weapon => ["┍", "┑", "┕", "┙", "━", "│"],
+    }
+}
+
 fn draw_box(buf: &mut Buffer, clip: Rect, p: &Part, off: (i32, i32), label: &str, live: Option<f64>, selected: bool, bad: bool) {
     let (x, y) = (p.x - off.0, p.y - off.1);
     let col = if bad {
@@ -574,14 +588,15 @@ fn draw_box(buf: &mut Buffer, clip: Rect, p: &Part, off: (i32, i32), label: &str
     let border = Style::default().fg(col);
     let inner_w = (BOX_W - 2) as usize;
     let name: String = p.kind.name().chars().take(inner_w).collect();
-    let top = format!("┌{name}{}┐", "─".repeat(inner_w - name.chars().count()));
+    let [tl, tr, bl, br, h, v] = box_lines(p.kind.category());
+    let top = format!("{tl}{name}{}{tr}", h.repeat(inner_w - name.chars().count()));
     put(buf, clip, x, y, &top, border.add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }));
     for r in 1..BOX_H - 1 {
-        put(buf, clip, x, y + r, "│", border);
+        put(buf, clip, x, y + r, v, border);
         put(buf, clip, x + 1, y + r, &" ".repeat(inner_w), Style::default().bg(Color::Rgb(16, 24, 34)));
-        put(buf, clip, x + BOX_W - 1, y + r, "│", border);
+        put(buf, clip, x + BOX_W - 1, y + r, v, border);
     }
-    put(buf, clip, x, y + BOX_H - 1, &format!("└{}┘", "─".repeat(inner_w)), border);
+    put(buf, clip, x, y + BOX_H - 1, &format!("{bl}{}{br}", h.repeat(inner_w)), border);
     // ports
     let ins = p.kind.inputs();
     for (i, n) in ins.iter().enumerate() {
@@ -1445,7 +1460,7 @@ mod tests {
             }
             app.screen = Screen::Bench;
             let text = screen_text(&mut app, w, h);
-            assert!(text.contains("┌Compass"), "{text}");
+            assert!(text.contains("╭Compass"), "{text}");
             let wired = app.design.clone();
             app.design = crate::design::Design::from_lua(&crate::lua::compile(&wired), "x");
             let text = screen_text(&mut app, w, h);
