@@ -14,6 +14,7 @@ mod replay;
 mod route;
 mod sim;
 mod store;
+mod lesson;
 mod tournament;
 mod ui;
 
@@ -36,6 +37,8 @@ the night league's challenges on Europa. In the game, ? shows the keys.
   --challenge ID   start on the bench with this challenge picked:
                    ring-hall, cold-stores, puck,
                    boiler-room, long-window, laundry or dome
+  --learn          watch and learn: a rover wired step by step, with
+                   every key shown (nothing is saved)
   --demo           watch a short tour (nothing is saved)
   --replay FILE    watch a saved match
   --tournament ... rovers and bots fight each other headless; see
@@ -88,6 +91,7 @@ fn tour() -> Vec<(u32, Step)> {
 
 fn main() -> ExitCode {
     let mut demo = false;
+    let mut learn = false;
     let mut challenge = None;
     let mut replay_file = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -114,6 +118,7 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--demo" => demo = true,
+            "--learn" => learn = true,
             "--replay" => {
                 let Some(f) = args.get(i + 1) else {
                     eprintln!("icewire: --replay needs a replay file");
@@ -162,12 +167,15 @@ fn main() -> ExitCode {
     if let Some(r) = replay_file {
         app.watch(r);
     }
+    if learn {
+        app.lesson_start();
+    }
     let mut terminal = ratatui::init();
     let _ = execute!(io::stdout(), EnableMouseCapture);
     let result = run(&mut terminal, &mut app);
     let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
-    if !demo {
+    if !app.quiet() {
         app.save();
     }
     match result {

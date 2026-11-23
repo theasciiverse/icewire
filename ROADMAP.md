@@ -99,6 +99,20 @@ Every version ends with a report saying what to try first.
 - [x] **Two example bots** in `examples/`: Shellby (POSIX shell, builtins
       only) and Dodger (Python 3, beats Sprocket and Kettle).
 
+## 0.5.0: watch and learn (built 2026-11-23)
+
+- [x] **A lesson in the game.** *Watch and learn* on the title screen (or
+  `--learn`): Ines wires First Light on the real bench, every step a real
+  key press at a pace a person can follow, and runs it round Ring Hall
+  three times: a number and a compass for one star, full power for two,
+  a distance compass, a compare and an OR to ease off at the checkpoints
+  for three. A caption says what each step does and why and shows the keys
+  as they are pressed; Space pauses, the arrows step forward and back
+  (going back rebuilds the bench exactly), Esc leaves and puts your own
+  rover back, and at the end Enter keeps First Light in the garage.
+  Nothing is saved while it plays. A test plays the whole lesson and
+  checks every lap time and star the captions promise.
+
 ## 1.0.0
 
 Waits on David playing it.

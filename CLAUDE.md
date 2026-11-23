@@ -155,7 +155,7 @@ Icewire uses no MindRover name, text, art, component names or levels, so
 it does not wait on the CogniToy rights research; that research matters
 only if we ever want the MindRover name or content itself.
 
-## Code (0.4.0)
+## Code (0.5.0)
 
 Rust 2024 + Ratatui 0.30, `log`, `env_logger`, and `mlua` with Lua 5.4
 vendored (built from source by `cc`, so no system Lua), `libc` on Unix
@@ -174,7 +174,7 @@ to Lua), `main` (loop, session log, editor hand-off, `--demo` tour).
 `bot` (bot processes on the line protocol of `PROTOCOL.md`: reader
 threads, bounded queues, per-tick deadline, process groups killed and
 reaped on drop), `replay` (text replays of states, and their playback),
-`tournament` (`--tournament`). `lua::tests` prove compiled Lua runs bit
+`tournament` (`--tournament`), `lesson` (Watch and learn, `--learn`: a scripted lesson that types real keys into the game, with captions; its test plays it through and checks every lap time and star the captions state, so rerun it after any physics or bench change). `lua::tests` prove compiled Lua runs bit
 for bit like the wiring; keep `compile` in step with `brain` whenever a
 part changes. Bot process tests are Unix-only and clean up every child;
 keep it that way. The protocol is ours, written from the idea alone:

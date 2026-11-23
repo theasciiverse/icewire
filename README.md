@@ -74,6 +74,14 @@ The parts library (P on the bench) has the whole story of each.
 
 ## Playing
 
+New to wiring? *Watch and learn* on the title screen first: Ines wires a
+rover on the real bench in front of you, key by key, and runs it round
+Ring Hall three times, each time a little cleverer, from sitting still to
+three stars. A caption says what each step does and why, and shows every
+key as it is pressed. Space pauses, the right arrow skips ahead, the left
+arrow goes back a step, Esc leaves, and at the end Enter keeps the rover,
+First Light, in your garage. Nothing is saved while it plays.
+
 From the title, *The league* starts the season: read the night's scene,
 press Enter for the bench, R to run, Tab to watch the wiring live, Esc to
 stop and rewire. *Wire a rover* goes straight to the bench, and *Free
@@ -217,6 +225,7 @@ any machine.
 ```
 icewire                      the title screen
 icewire --challenge puck     straight to the bench with a challenge picked
+icewire --learn              watch and learn: a rover wired step by step
 icewire --demo               a short tour; nothing is saved
 icewire --tournament ...     rovers and bots fight headless (--help for more)
 icewire --replay FILE        watch a saved match

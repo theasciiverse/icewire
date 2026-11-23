@@ -55,7 +55,7 @@ pub struct RunResult {
     pub story: bool,
 }
 
-pub const TITLE_MENU: [&str; 7] = ["The league", "Free play", "Wire a rover", "Garage", "Parts library", "How to play", "Quit"];
+pub const TITLE_MENU: [&str; 8] = ["The league", "Watch and learn", "Free play", "Wire a rover", "Garage", "Parts library", "How to play", "Quit"];
 pub const SPEEDS: [u32; 4] = [1, 2, 4, 8];
 
 pub struct App {
@@ -103,6 +103,8 @@ pub struct App {
     pub bench_area: Rect,
     /// No saving: the attract-mode tour.
     pub demo: bool,
+    /// Watch and learn, while it plays.
+    pub lesson: Option<crate::lesson::Lesson>,
     pub frame: u32,
 }
 
@@ -153,6 +155,7 @@ impl App {
             exit: false,
             bench_area: Rect::default(),
             demo,
+            lesson: None,
             frame: 0,
         };
         let pick = settings.rover.as_deref().and_then(|r| app.garage.iter().position(|g| g.stem == r && g.design.is_ok())).or_else(|| app.garage.iter().position(|g| g.design.is_ok()));
@@ -188,12 +191,17 @@ impl App {
         }
     }
 
+    /// Nothing is saved: the attract tour, or the lesson playing.
+    pub fn quiet(&self) -> bool {
+        self.demo || self.lesson.is_some()
+    }
+
     pub fn relayout(&mut self) {
         self.layout = route::layout(&self.design);
     }
 
     pub fn save(&mut self) {
-        if self.demo {
+        if self.quiet() {
             return;
         }
         if let Some(s) = store::save(&self.design, self.stem.as_deref()) {
@@ -214,7 +222,7 @@ impl App {
         self.save();
     }
 
-    fn go(&mut self, s: Screen) {
+    pub(crate) fn go(&mut self, s: Screen) {
         log::info!("screen {:?} -> {s:?}", self.screen);
         if s == Screen::Help {
             self.help_scroll = 0;
@@ -223,7 +231,7 @@ impl App {
             self.back = self.screen;
         }
         if s == Screen::Garage {
-            if !self.demo {
+            if !self.quiet() {
                 self.garage = store::garage();
             }
             self.sel = self.garage.iter().position(|g| Some(&g.stem) == self.stem.as_ref()).unwrap_or(0);
@@ -250,6 +258,14 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        if self.lesson.is_some() {
+            self.lesson_tick();
+        }
+        self.world_tick();
+    }
+
+    /// The game's own tick: messages, replays, the running challenge.
+    pub(crate) fn world_tick(&mut self) {
         self.frame = self.frame.wrapping_add(1);
         if let Some((_, t)) = &mut self.msg {
             *t = t.saturating_sub(1);
@@ -279,7 +295,7 @@ impl App {
         let r = match sim.outcome {
             Outcome::Won(_) => {
                 let stars = ch.stars(secs, sim.rovers[0].rover.charge);
-                let best = !self.demo && self.records.offer(ch.id, secs, stars, &self.design.name);
+                let best = !self.quiet() && self.records.offer(ch.id, secs, stars, &self.design.name);
                 let them = sim.rovers.get(1).map(|e| e.design.name.clone()).unwrap_or_default();
                 let what = match ch.goal {
                     Goal::Race => "Lap done".to_string(),
@@ -294,7 +310,7 @@ impl App {
                     && c == self.won
                 {
                     self.won += 1;
-                    if !self.demo {
+                    if !self.quiet() {
                         campaign::save(self.won);
                     }
                     log::info!("league night {} won", c + 1);
@@ -309,6 +325,7 @@ impl App {
         log::info!("run over: {} ({:.2} s, {} stars)", r.text, r.secs, r.stars);
         self.result = Some(r);
         self.arena_view = true;
+        self.lesson_saw_result();
     }
 
     pub fn run(&mut self) {
@@ -328,7 +345,7 @@ impl App {
         log::info!("run {} with {:?}", challenge::ALL[self.ch].id, self.design.name);
     }
 
-    fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         self.sim = None;
         self.result = None;
         self.paused = false;
@@ -343,6 +360,15 @@ impl App {
             self.exit = true;
             return;
         }
+        if self.lesson.is_some() {
+            self.lesson_key(k);
+            return;
+        }
+        self.press(k);
+    }
+
+    /// A key as the game takes it (the lesson types through here too).
+    pub(crate) fn press(&mut self, k: KeyEvent) {
         if self.popup.is_some() {
             self.popup_key(k);
             return;
@@ -396,11 +422,12 @@ impl App {
         match k.code {
             KeyCode::Enter | KeyCode::Char(' ') => match self.sel {
                 0 => self.go(Screen::League),
-                1 => self.go(Screen::Challenges),
-                2 => self.go(Screen::Bench),
-                3 => self.go(Screen::Garage),
-                4 => self.go(Screen::Library),
-                5 => self.go(Screen::Help),
+                1 => self.lesson_start(),
+                2 => self.go(Screen::Challenges),
+                3 => self.go(Screen::Bench),
+                4 => self.go(Screen::Garage),
+                5 => self.go(Screen::Library),
+                6 => self.go(Screen::Help),
                 _ => self.exit = true,
             },
             KeyCode::Char('w') => self.go(Screen::Bench),
@@ -446,7 +473,7 @@ impl App {
 
     /// Asks the main loop to open this Lua rover's file in an editor.
     fn edit_script(&mut self) {
-        if self.demo {
+        if self.quiet() {
             return;
         }
         self.save();
@@ -497,7 +524,7 @@ impl App {
         self.undo.clear();
         self.lua_scroll = 0;
         self.save();
-        if !self.demo {
+        if !self.quiet() {
             self.garage = store::garage();
         }
         log::info!("compiled to Lua as {:?}", self.design.name);
@@ -573,7 +600,7 @@ impl App {
             KeyCode::Char('b') | KeyCode::Char('B') => {
                 let script = crate::tournament::examples().map(|e| e.join("dodger.py")).map(|p| format!("python3 \"{}\"", p.display())).unwrap_or_else(|| "python3 dodger.py".into());
                 let d = Design { name: "Dodger".into(), parts: Vec::new(), wires: Vec::new(), lua: None, bot: Some(design::BotSpec { command: script, dir: store::rovers_dir() }) };
-                if !self.demo {
+                if !self.quiet() {
                     let stem = store::save(&d, None);
                     self.garage = store::garage();
                     self.sel = self.garage.iter().position(|g| Some(&g.stem) == stem.as_ref()).unwrap_or(0);
@@ -582,7 +609,7 @@ impl App {
             }
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 let mut d = Design::from_lua(crate::lua::STARTER, "Scribbler");
-                if !self.demo {
+                if !self.quiet() {
                     d.name = design::clean_name(&d.name);
                     let stem = store::save(&d, None);
                     self.garage = store::garage();
@@ -594,7 +621,7 @@ impl App {
                 if let Some(Stored { design: Ok(d), .. }) = self.garage.get(self.sel) {
                     let mut d = d.clone();
                     d.name = design::clean_name(&format!("{} copy", d.name));
-                    if !self.demo {
+                    if !self.quiet() {
                         store::save(&d, None);
                         self.garage = store::garage();
                     }
@@ -1142,7 +1169,7 @@ impl App {
                     self.popup = None;
                     if new {
                         let d = Design::blank(&name);
-                        if !self.demo {
+                        if !self.quiet() {
                             let stem = store::save(&d, None);
                             self.garage = store::garage();
                             self.sel = self.garage.iter().position(|g| Some(&g.stem) == stem.as_ref()).unwrap_or(0);
@@ -1190,7 +1217,7 @@ impl App {
             Popup::Delete { stem } => match k.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
                     self.popup = None;
-                    if !self.demo {
+                    if !self.quiet() {
                         store::delete(&stem);
                         self.garage = store::garage();
                     }
@@ -1213,6 +1240,9 @@ impl App {
     // --------------------------------------------------------- mouse
 
     pub fn mouse(&mut self, m: MouseEvent) {
+        if self.lesson.is_some() {
+            return;
+        }
         if self.design.lua.is_some() && self.screen == Screen::Bench && self.popup.is_none() && !(self.running() && self.arena_view) {
             match m.kind {
                 MouseEventKind::ScrollUp => self.lua_scroll = self.lua_scroll.saturating_sub(3),

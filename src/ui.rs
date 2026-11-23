@@ -77,6 +77,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         f.render_widget(p, area);
         return;
     }
+    // while the lesson plays, the game draws above its caption
+    let (area, caption) = if app.lesson.is_some() {
+        let h = if area.height >= 32 { 9 } else { 8 };
+        let [top, cap] = Layout::vertical([Constraint::Min(10), Constraint::Length(h)]).areas(area);
+        (top, Some(cap))
+    } else {
+        (area, None)
+    };
     match app.screen {
         Screen::Title => title(f, app, area),
         Screen::League => league(f, app, area),
@@ -103,6 +111,53 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if let Some(p) = app.popup.clone() {
         popup(f, app, &p, area);
     }
+    if let Some(cap) = caption {
+        lesson_caption(f, app, cap);
+    }
+}
+
+/// The lesson's caption: which step, what is happening and why, the keys
+/// just pressed, and how to pause, step and leave.
+fn lesson_caption(f: &mut Frame, app: &App, area: Rect) {
+    let Some(l) = &app.lesson else { return };
+    let beat = &crate::lesson::BEATS[l.beat.min(crate::lesson::BEATS.len() - 1)];
+    let n = crate::lesson::BEATS.len();
+    let finished = l.done;
+    let mut title = vec![
+        Span::styled(" Watch and learn ", Style::default().fg(Color::Black).bg(ICE).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {}/{n} ", l.beat + 1), Style::default().fg(DIM)),
+        Span::styled(format!("{} ", beat.title), Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
+    ];
+    if l.paused {
+        title.push(Span::styled(" paused ", Style::default().fg(Color::Black).bg(AMBER)));
+    }
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(ICE)).title(Line::from(title));
+    let inner = block.inner(area);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    let [text, keys, foot] = Layout::vertical([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(inner);
+    f.render_widget(Paragraph::new(beat.say).style(Style::default().fg(TEXT)).wrap(Wrap { trim: true }), text);
+    // the keys of this step, newest last, cut from the left to fit
+    let shown = crate::lesson::keys_shown(&l.keys);
+    let room = keys.width.saturating_sub(7) as usize;
+    let chars: Vec<char> = shown.chars().collect();
+    let shown: String = if chars.len() > room { format!("\u{2026}{}", chars[chars.len() - room + 1..].iter().collect::<String>()) } else { shown };
+    let mut ks = vec![Span::styled(" keys ", Style::default().fg(DIM))];
+    if !shown.is_empty() {
+        ks.push(Span::styled(shown, Style::default().fg(WIRE_ON).add_modifier(Modifier::BOLD)));
+    }
+    f.render_widget(Paragraph::new(Line::from(ks)), keys);
+    let help: &[(&str, &str)] = if finished {
+        &[("Enter", "keep First Light"), ("Esc", "back to the title"), ("\u{2190}", "a step back")]
+    } else {
+        &[("Space", "pause"), ("\u{2192}", "next step"), ("\u{2190}", "a step back"), ("Esc", "leave")]
+    };
+    let mut spans = Vec::new();
+    for (k, what) in help {
+        spans.push(Span::styled(format!(" {k}"), Style::default().fg(AMBER)));
+        spans.push(Span::styled(format!(" {what} "), Style::default().fg(DIM)));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), foot);
 }
 
 // ------------------------------------------------------------- Braille
@@ -493,7 +548,7 @@ BATTLES
   Every rover starts with 100 charge. A pellet takes 5, a slush ball 15, and a rover at 0 stalls where it stands. Battle stars come from the charge you have left when you win. The radar finds the nearest rover through walls; the gauge reads your own charge.
 
 FIRST STEPS
-  The league on the title screen is a season of seven nights, each a story and a challenge; free play opens every challenge at once. Homer waits in the garage. Run him in Ring Hall (r), watch, then try more power on the tracks, a compass in distance mode to slow for corners, or a ranger to see walls coming.
+  Watch and learn, on the title screen, wires a rover in front of you, key by key, and runs it three times, each time cleverer: every key shown, Space to pause, the arrows to step. Then the league on the title screen is a season of seven nights, each a story and a challenge; free play opens every challenge at once. Homer waits in the garage. Run him in Ring Hall (r), watch, then try more power on the tracks, a compass in distance mode to slow for corners, or a ranger to see walls coming.
 
 Rovers are plain text files in the state folder (rovers/*.rover); copy them, share them, edit them by hand."#;
 
