@@ -5,6 +5,7 @@
 use crate::brain::{Brain, Drive};
 use crate::challenge::{self, Challenge, Goal};
 use crate::design::Design;
+use crate::lua::LuaBrain;
 use crate::geom::{deg, dir, heading_of, rad, wrap};
 use crate::parts::{Kind, Mount, RANGER_MAX};
 use std::collections::VecDeque;
@@ -231,6 +232,10 @@ pub struct Entry {
     pub design: Design,
     pub brain: Brain,
     pub rover: Rover,
+    /// A Lua rover's running script.
+    pub lua: Option<LuaBrain>,
+    /// The last script error put in the feed, so it is not repeated.
+    last_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -294,15 +299,23 @@ impl Sim {
         let ch = &challenge::ALL[ch_index];
         let arena = Arena::parse(ch);
         let mut rovers = Vec::new();
+        let mut events = vec![(0, format!("{}: go!", ch.name))];
         let mut add = |d: Design, i: usize| {
             let (x, y) = arena.starts[i];
-            rovers.push(Entry { brain: Brain::new(&d), design: d, rover: Rover::new(x, y, ch.headings[i]) });
+            let lua = match d.lua.as_deref().map(LuaBrain::new) {
+                Some(Ok(l)) => Some(l),
+                Some(Err(e)) => {
+                    events.push((0, format!("{}'s script will not load: {e}", d.name)));
+                    None
+                }
+                None => None,
+            };
+            rovers.push(Entry { brain: Brain::new(&d), design: d, rover: Rover::new(x, y, ch.headings[i]), lua, last_error: None });
         };
         add(player, 0);
         if let Some(src) = ch.opponent {
             add(Design::from_text(src).expect("built-in rover"), 1);
         }
-        let events = vec![(0, format!("{}: go!", ch.name))];
         Sim { ch, arena, rovers, tick: 0, outcome: Outcome::Running, events, beams: Vec::new(), pellets: Vec::new(), lobs: Vec::new(), splashes: Vec::new() }
     }
 
@@ -376,14 +389,21 @@ impl Sim {
 
     /// Reads sensor part `p` of rover `i`.
     fn sense(&mut self, i: usize, p: usize) -> f64 {
-        let part = self.rovers[i].design.parts[p].clone();
+        let part = &self.rovers[i].design.parts[p];
+        let (kind, mount, mode, value) = (part.kind, part.mount, part.mode, part.value);
+        self.read(i, kind, mount, mode, value)
+    }
+
+    /// Reads a sensor (or a weapon's loaded state) for rover `i`, with a
+    /// part's settings. The wiring and Lua both come through here.
+    pub fn read(&mut self, i: usize, kind: Kind, mount: Mount, mode: usize, value: f64) -> f64 {
         let r = &self.rovers[i].rover;
         let (rh, bumps, heading) = (r.h, r.bumps, r.heading_deg());
         let (rx, ry) = (r.x, r.y);
-        let facing = rh + rad(part.mount.angle());
-        match part.kind {
+        let facing = rh + rad(mount.angle());
+        match kind {
             Kind::Bumper => {
-                let on = match part.mount {
+                let on = match mount {
                     Mount::All => bumps.iter().any(|b| *b),
                     m => bumps[Mount::SIDES.iter().position(|s| *s == m).unwrap_or(0)],
                 };
@@ -392,9 +412,9 @@ impl Sim {
             Kind::Whisker => {
                 let mut hit = false;
                 for off in [-30.0, 0.0, 30.0] {
-                    let d = self.cast(i, facing + rad(off), part.value);
+                    let d = self.cast(i, facing + rad(off), value);
                     self.beam(i, facing + rad(off), d);
-                    hit |= d < part.value;
+                    hit |= d < value;
                 }
                 if hit { 1.0 } else { 0.0 }
             }
@@ -406,7 +426,7 @@ impl Sim {
             Kind::Compass => {
                 let (bx, by) = self.beacon(i);
                 let (dx, dy) = (bx - rx, by - ry);
-                match part.mode {
+                match mode {
                     0 => heading,
                     1 => deg(wrap(heading_of(dx, dy) - rh)),
                     _ => (dx * dx + dy * dy).sqrt(),
@@ -414,14 +434,14 @@ impl Sim {
             }
             Kind::Radar => match self.nearest(i) {
                 Some((dx, dy)) => {
-                    if part.mode == 0 {
+                    if mode == 0 {
                         deg(wrap(heading_of(dx, dy) - rh))
                     } else {
                         (dx * dx + dy * dy).sqrt()
                     }
                 }
                 None => {
-                    if part.mode == 0 {
+                    if mode == 0 {
                         0.0
                     } else {
                         99.0
@@ -583,6 +603,23 @@ impl Sim {
         // 1. every rover thinks
         for i in 0..self.rovers.len() {
             if !self.rovers[i].rover.active() {
+                continue;
+            }
+            if let Some(mut lua) = self.rovers[i].lua.take() {
+                let drive = lua.tick(self, i);
+                if lua.error != self.rovers[i].last_error {
+                    if let Some(e) = &lua.error {
+                        let name = self.rovers[i].design.name.clone();
+                        self.events.push((self.tick, format!("{name}'s script: {e}")));
+                    }
+                    self.rovers[i].last_error = lua.error.clone();
+                }
+                self.rovers[i].lua = Some(lua);
+                self.rovers[i].rover.drive = drive;
+                continue;
+            }
+            if self.rovers[i].design.lua.is_some() {
+                self.rovers[i].rover.drive = Drive::default();
                 continue;
             }
             let mut brain = self.rovers[i].brain.clone();

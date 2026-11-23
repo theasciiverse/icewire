@@ -22,9 +22,9 @@ pub struct Drive {
 #[derive(Clone, Debug)]
 pub struct Brain {
     /// Evaluation order, as indexes into the design's parts.
-    order: Vec<usize>,
+    pub order: Vec<usize>,
     /// For each part and input, the index of the part feeding it.
-    feeds: Vec<[Option<usize>; 2]>,
+    pub feeds: Vec<[Option<usize>; 2]>,
     /// Each part's output this tick.
     pub out: Vec<f64>,
     /// Each part's inputs this tick, for the live bench.

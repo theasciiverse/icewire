@@ -55,11 +55,24 @@ Every version ends with a report saying what to try first.
       challenge, with Ines, Hana, Oskar, Sami, Ruben and the director. A
       second race, the Long Window, under Jupiter.
 
-## 0.3.0: Lua
+## 0.3.0: Lua (built 2026-11-23)
 
-- Every wiring compiles to readable Lua the player can open, edit and run
-  instead; a rover can be pure Lua.
-- Sandboxed (no io, no os), with a per-tick instruction budget.
+- [x] **Wiring compiles to Lua.** L on the bench turns any wiring into a
+      readable script, one line or two per part in the order the wiring
+      runs, as a new rover beside the wired one. Tests prove the compiled
+      script drives every built-in rover bit for bit the same as its
+      wiring.
+- [x] **Open, edit and run.** A Lua rover's bench shows its script with
+      line numbers and colour; e opens it in the player's editor, r runs
+      it, print() shows in the live view next to any error.
+- [x] **Pure Lua rovers.** `.lua` files in the rovers folder are rovers;
+      l in the garage starts one from a short example. The script calls
+      bumper, whisker, ranger, compass, radar, gauge and time, and sets
+      tracks, gyro, fire and lob.
+- [x] **Sandboxed.** Lua 5.4 built into the binary with only math, string,
+      table and utf8; no io, os, package, debug, load or dofile; 16 MB of
+      memory; math.random seeded the same every run; 50000 instructions a
+      tick, and a tick over budget drives nothing while the run goes on.
 
 ## 0.4.0: the open bot port
 

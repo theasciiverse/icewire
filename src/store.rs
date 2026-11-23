@@ -45,11 +45,12 @@ pub fn garage() -> Vec<Stored> {
     let mut list: Vec<Stored> = std::fs::read_dir(&dir)
         .map(|rd| {
             rd.flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "rover"))
+                .filter(|e| e.path().extension().is_some_and(|x| x == "rover" || x == "lua"))
                 .map(|e| {
                     let p = e.path();
                     let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    let design = std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| Design::from_text(&t));
+                    let text = std::fs::read_to_string(&p).map_err(|e| e.to_string());
+                    let design = if p.extension().is_some_and(|x| x == "lua") { text.map(|t| Design::from_lua(&t, &stem)) } else { text.and_then(|t| Design::from_text(&t)) };
                     Stored { stem, design }
                 })
                 .collect()
@@ -71,7 +72,7 @@ pub fn free_stem(name: &str, keep: Option<&str>) -> String {
     let Some(dir) = rovers_dir() else { return base };
     let mut s = base.clone();
     let mut n = 2;
-    while Some(s.as_str()) != keep && dir.join(format!("{s}.rover")).exists() {
+    while Some(s.as_str()) != keep && (dir.join(format!("{s}.rover")).exists() || dir.join(format!("{s}.lua")).exists()) {
         s = format!("{base}-{n}");
         n += 1;
     }
@@ -83,23 +84,31 @@ pub fn free_stem(name: &str, keep: Option<&str>) -> String {
 pub fn save(d: &Design, old: Option<&str>) -> Option<String> {
     let dir = rovers_dir()?;
     let s = free_stem(&d.name, old);
-    let path = dir.join(format!("{s}.rover"));
-    if let Err(e) = std::fs::write(&path, d.to_text()) {
+    let ext = if d.lua.is_some() { "lua" } else { "rover" };
+    let path = dir.join(format!("{s}.{ext}"));
+    let text = d.lua_text().unwrap_or_else(|| d.to_text());
+    if let Err(e) = std::fs::write(&path, text) {
         log::error!("saving {}: {e}", path.display());
         return None;
     }
     if let Some(old) = old
         && old != s
     {
-        let _ = std::fs::remove_file(dir.join(format!("{old}.rover")));
+        let _ = std::fs::remove_file(dir.join(format!("{old}.{ext}")));
     }
-    log::info!("saved rover {:?} as {s}.rover", d.name);
+    log::info!("saved rover {:?} as {s}.{ext}", d.name);
     Some(s)
+}
+
+/// Where a rover's file is (for the editor).
+pub fn path_of(d: &Design, stem: &str) -> Option<PathBuf> {
+    Some(rovers_dir()?.join(format!("{stem}.{}", if d.lua.is_some() { "lua" } else { "rover" })))
 }
 
 pub fn delete(stem: &str) {
     if let Some(dir) = rovers_dir() {
         let _ = std::fs::remove_file(dir.join(format!("{stem}.rover")));
+        let _ = std::fs::remove_file(dir.join(format!("{stem}.lua")));
         log::info!("deleted rover {stem}");
     }
 }

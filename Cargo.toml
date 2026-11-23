@@ -1,6 +1,6 @@
 [package]
 name = "icewire"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Asciiverse robot programming game: wire a rover's sensors, logic and drive on a bench, then send it into the arena on Europa, Rust + Ratatui"
@@ -13,6 +13,7 @@ path = "src/main.rs"
 ratatui = "0.30"
 log = "0.4"
 env_logger = "0.11"
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
 
 [profile.release]
 debug = 1

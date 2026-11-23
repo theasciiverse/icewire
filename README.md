@@ -91,6 +91,7 @@ play* opens every challenge.
 | u | undo |
 | r, F5 | run |
 | c | next challenge |
+| L | compile the wiring to a Lua rover |
 | n, g, p, ? | rename, garage, parts library, help |
 
 The mouse works too: drag a part, click its output to start a wire,
@@ -105,10 +106,43 @@ right-click to remove.
 | r | run again |
 | Esc | stop and rewire |
 
+## When the wiring grows up: Lua
+
+Press **L** on any wired rover and Icewire writes its wiring out as Lua: a
+new rover beside the old one, a line or two per part, in the order the
+wiring runs, driving exactly as the wiring did. Read it, then make it
+yours. **e** opens the script in your editor (`$VISUAL` or `$EDITOR`, else
+nano, vi or Notepad); save, close, and you are back on the bench with the
+script checked. **r** runs it, and **Tab** during the run shows the script
+beside whatever it `print`s.
+
+Or start from nothing: **l** in the garage makes a rover in plain Lua.
+
+```lua
+-- Icewire rover: Scribbler
+function tick()
+  -- turn toward the beacon, ease off when a wall is close
+  gyro(clamp(compass("bearing") / 30))
+  local speed = clamp(ranger("nose") / 3, 0.3, 1.0)
+  tracks(speed, speed)
+end
+```
+
+Icewire calls `tick()` sixty times a second. A script reads
+`bumper(side)`, `whisker(side, reach)`, `ranger(side)`,
+`compass("heading" | "bearing" | "distance")`, `radar("bearing" |
+"distance")`, `gauge()` and `time()`, and sets `tracks(left, right)` and
+`gyro(spin)` (each -1 to 1), `fire()` and `lob(metres)`; `loaded("pellet"
+| "lobber")` says what is ready. Scripts run sandboxed in Lua 5.4: math,
+string, table and utf8, nothing that touches files or the system, and at
+most 50,000 instructions a tick. A tick over budget drives nothing, and
+the run goes on.
+
 ## Rovers are text
 
 Every rover is a plain text file in `$XDG_STATE_HOME/icewire/rovers/`
-(`~/.local/state/icewire/rovers/` on most systems), saved as you work.
+(`~/.local/state/icewire/rovers/` on most systems), saved as you work: a
+`.rover` file for a wired rover, a `.lua` file for a Lua one.
 Copy one to a friend, or open it in an editor:
 
 ```
@@ -139,7 +173,8 @@ icewire --demo               a short tour; nothing is saved
 
 ## Building
 
-Rust 2024 (1.85 or newer):
+Rust 2024 (1.85 or newer) and a C compiler, for the Lua that is built
+into the binary:
 
 ```
 cargo build --release

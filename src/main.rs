@@ -7,6 +7,7 @@ mod campaign;
 mod challenge;
 mod design;
 mod geom;
+mod lua;
 mod parts;
 mod route;
 mod sim;
@@ -72,9 +73,10 @@ fn tour() -> Vec<(u32, Step)> {
     let mut t = vec![k(90, Enter), k(150, Down), k(175, Down), k(200, Down), k(260, Enter), k(560, Enter), (561, Step::Load(design::SLEET))];
     t.extend([k(640, Tab), k(670, Tab), k(740, Char('r')), k(1100, Tab), k(1340, Tab)]);
     t.extend([k(1600, Enter), k(1850, Enter)]);
-    // night 5: the long window, under Jupiter
-    t.extend([k(1950, Enter), k(2150, Enter), (2151, Step::Load(design::COMET)), k(2230, Char('r')), k(2450, Char('f')), k(2470, Char('f'))]);
-    t.push(k(3200, Esc));
+    // then the same rover as Lua: compile it, read it, run it again
+    t.extend([k(1900, Esc), k(1960, Down), k(1990, Down), k(2020, Enter), k(2100, Char('L'))]);
+    t.extend([k(2250, PageDown), k(2400, PageDown), k(2520, Char('r')), k(2600, Tab), k(2840, Tab)]);
+    t.push(k(3370, Esc));
     t
 }
 
@@ -146,6 +148,39 @@ fn main() -> ExitCode {
     }
 }
 
+/// Hands the terminal to the player's editor ($VISUAL, $EDITOR, else nano
+/// or vi; Notepad on Windows) for one file, then takes it back.
+fn edit_file(terminal: &mut ratatui::DefaultTerminal, path: &std::path::Path) -> Result<(), String> {
+    let _ = execute!(io::stdout(), DisableMouseCapture);
+    ratatui::restore();
+    let mut choices: Vec<String> = ["VISUAL", "EDITOR"].iter().filter_map(|v| std::env::var(v).ok()).filter(|v| !v.trim().is_empty()).collect();
+    if cfg!(windows) {
+        choices.push("notepad".into());
+    } else {
+        choices.extend(["nano".into(), "vi".into()]);
+    }
+    let mut result = Err("No editor found: set EDITOR to your favourite".to_string());
+    for c in choices {
+        let mut words = c.split_whitespace();
+        let Some(prog) = words.next() else { continue };
+        match std::process::Command::new(prog).args(words).arg(path).status() {
+            Ok(_) => {
+                result = Ok(());
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                result = Err(format!("{prog}: {e}"));
+                break;
+            }
+        }
+    }
+    *terminal = ratatui::init();
+    let _ = execute!(io::stdout(), EnableMouseCapture);
+    let _ = terminal.clear();
+    result
+}
+
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result<()> {
     let script = if app.demo { tour() } else { Vec::new() };
     let mut next = Instant::now();
@@ -177,6 +212,13 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result<()>
                 }
                 _ => {}
             }
+        }
+        if let Some(path) = app.edit_request.take() {
+            let how = edit_file(terminal, &path);
+            log::info!("editor closed: {how:?}");
+            app.after_edit(&path, how);
+            dirty = true;
+            next = Instant::now();
         }
         let now = Instant::now();
         if now < next {

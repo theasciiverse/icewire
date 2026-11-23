@@ -2,8 +2,8 @@
 # Records the catalog preview, asciiverse/icewire.cast: 100x30,
 # `icewire --demo` (the league, night 4's scene, Sleet on the bench, the
 # battle in the boiler room with a stretch on the live bench, the scene
-# after, then night 5, the Long Window under Jupiter), about 53 seconds;
-# the tour quits by itself.
+# after, then Sleet compiled to Lua, its script, and the battle run again
+# from Lua), about 56 seconds; the tour quits by itself.
 # Runs asciinema in a detached tmux pane, so nothing from this terminal gets
 # in; a throwaway HOME and state folder keep the session log out of the way
 # (the demo saves nothing).
@@ -21,5 +21,5 @@ tmux -L iw-rec new-session -d -s rec -x 100 -y 30 \
    asciinema rec --window-size 100x30 --idle-time-limit 2 \
      --capture-env TERM,COLORTERM,LANG --title 'Icewire' \
      --command 'icewire --demo' $out"
-sleep 58
+sleep 61
 ls -la "$out"

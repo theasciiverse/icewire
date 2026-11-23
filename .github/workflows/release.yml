@@ -3,9 +3,10 @@
 # file, attached to a GitHub release (hub/catalog/SCHEMA.md,
 # release.source = "github").
 #
-# On the pattern of tspace's. Tags look like v0.1.0. Icewire is pure Rust
-# with no sound or gamepad libraries, so Linux builds are static musl
-# binaries that run on any distribution. Each archive holds the binary at
+# On the pattern of tspace's. Tags look like v0.1.0. Icewire has no sound
+# or gamepad libraries, and its Lua 5.4 is compiled into the binary from
+# source (mlua's vendored feature, through musl-gcc on Linux), so Linux
+# builds are static musl binaries that run on any distribution. Each archive holds the binary at
 # the top, where av looks for it, with README.md and LICENSE.
 
 name: release

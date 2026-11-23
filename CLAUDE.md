@@ -143,8 +143,8 @@ personal history with the game is worth mentioning in any outreach.)
 
 ## Status
 
-0.2.0, the league, built 2026-11-23 on rover, after 0.1.0, the bench and
-the arena
+0.3.0, Lua, built 2026-11-23 on rover, after 0.1.0 (the bench and the
+arena) and 0.2.0 (the league)
 (see `ROADMAP.md` for what each version brings, `README.md` for play).
 Conceived 2026-07-02, scout camp. Renamed from RoverMind to Icewire, 2026-07-08.
 
@@ -154,10 +154,10 @@ Icewire uses no MindRover name, text, art, component names or levels, so
 it does not wait on the CogniToy rights research; that research matters
 only if we ever want the MindRover name or content itself.
 
-## Code (0.2.0)
+## Code (0.3.0)
 
-Rust 2024 + Ratatui 0.30, no other runtime crates but `log` and
-`env_logger`. Modules: `parts` (the twenty parts), `design` (a rover's
+Rust 2024 + Ratatui 0.30, `log`, `env_logger`, and `mlua` with Lua 5.4
+vendored (built from source by `cc`, so no system Lua). Modules: `parts` (the twenty parts), `design` (a rover's
 parts and wires, its text format, the built-in rovers Homer, Tumbler,
 Sprocket, Kettle, Nightjar, Comet and Sleet), `brain` (evaluates the wiring each tick, sources first, loops read
 last tick), `sim` (tile arena, disc rovers, 60 Hz fixed-step physics,
@@ -167,7 +167,10 @@ bit the same everywhere), `route` (A* wire routing on the bench),
 charge to keep), `campaign` (the league's seven nights and their
 scenes, progress in `league.txt`), `store` (state
 folder; `None` in tests), `app` (screens and keys), `ui` (drawing),
-`main` (loop, session log, `--demo` tour).
+`lua` (the sandboxed Lua brain, its host API, the compiler from wiring
+to Lua), `main` (loop, session log, editor hand-off, `--demo` tour).
+`lua::tests` prove compiled Lua runs bit for bit like the wiring; keep
+`compile` in step with `brain` whenever a part changes.
 
 Balance is pinned by tests in `sim.rs`: Homer finishes Ring Hall with one
 star, raw power gets two, a gated or ranger-paced rover three; a

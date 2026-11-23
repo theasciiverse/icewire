@@ -1,6 +1,7 @@
 //! What is on screen and what every key does there.
 
 use crate::campaign;
+use crate::lua::{self, LuaBrain};
 use crate::challenge::{self, Goal};
 use crate::design::{self, BENCH_H, BENCH_W, Design};
 use crate::parts::{self, BOX_H, BOX_W, Kind};
@@ -80,6 +81,10 @@ pub struct App {
     pub sel: usize,
     pub lib_sel: usize,
     pub help_scroll: u16,
+    /// The Lua view's first line on screen.
+    pub lua_scroll: u16,
+    /// A file to open in the player's editor, for the main loop.
+    pub edit_request: Option<std::path::PathBuf>,
     /// League nights won, the night being played, and which half of its
     /// story is on screen.
     pub won: usize,
@@ -129,6 +134,8 @@ impl App {
             sel: 0,
             lib_sel: 0,
             help_scroll: 0,
+            lua_scroll: 0,
+            edit_request: None,
             won: if demo { 3 } else { campaign::load() },
             chapter: None,
             story_after: false,
@@ -160,6 +167,7 @@ impl App {
             self.design = d.clone();
             self.stem = Some(stem.clone());
             self.undo.clear();
+            self.lua_scroll = 0;
             self.mode = Mode::Edit;
             if let Some(p) = self.design.parts.first() {
                 self.cx = p.x + 1;
@@ -292,6 +300,12 @@ impl App {
     }
 
     pub fn run(&mut self) {
+        if let Some(script) = &self.design.lua
+            && let Err(e) = LuaBrain::new(script)
+        {
+            self.say(format!("The script will not load: {e}"));
+            return;
+        }
         self.save();
         self.sim = Some(Sim::new(self.ch, self.design.clone()));
         self.result = None;
@@ -331,9 +345,9 @@ impl App {
             Screen::Help => {
                 match k.code {
                     KeyCode::Up | KeyCode::Char('k') => self.help_scroll = self.help_scroll.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => self.help_scroll = (self.help_scroll + 1).min(40),
+                    KeyCode::Down | KeyCode::Char('j') => self.help_scroll = (self.help_scroll + 1).min(80),
                     KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(10),
-                    KeyCode::PageDown | KeyCode::Char(' ') => self.help_scroll = (self.help_scroll + 10).min(40),
+                    KeyCode::PageDown | KeyCode::Char(' ') => self.help_scroll = (self.help_scroll + 10).min(80),
                     _ => {}
                 }
                 if matches!(k.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::F(1)) {
@@ -343,6 +357,8 @@ impl App {
             Screen::Bench => {
                 if self.running() {
                     self.run_key(k)
+                } else if self.design.lua.is_some() {
+                    self.lua_key(k)
                 } else {
                     self.bench_key(k)
                 }
@@ -383,6 +399,86 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') => self.exit = true,
             _ => {}
         }
+    }
+
+    /// The bench for a Lua rover: its script, to read, edit and run.
+    fn lua_key(&mut self, k: KeyEvent) {
+        match k.code {
+            KeyCode::Up | KeyCode::Char('k') => self.lua_scroll = self.lua_scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => self.lua_scroll = self.lua_scroll.saturating_add(1),
+            KeyCode::PageUp => self.lua_scroll = self.lua_scroll.saturating_sub(15),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.lua_scroll = self.lua_scroll.saturating_add(15),
+            KeyCode::Home => self.lua_scroll = 0,
+            KeyCode::Char('e') | KeyCode::Enter => self.edit_script(),
+            KeyCode::Char('r') | KeyCode::F(5) => self.run(),
+            KeyCode::Char('c') => {
+                self.chapter = None;
+                self.ch = (self.ch + 1) % challenge::ALL.len();
+                self.save();
+                self.say(format!("Challenge: {}", challenge::ALL[self.ch].name));
+            }
+            KeyCode::Char('n') => self.popup = Some(Popup::Name { buf: self.design.name.clone(), new: false }),
+            KeyCode::Char('?') | KeyCode::F(1) => self.go(Screen::Help),
+            KeyCode::Char('p') => self.go(Screen::Library),
+            KeyCode::Char('g') => {
+                self.save();
+                self.go(Screen::Garage);
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.save();
+                self.go(Screen::Title);
+            }
+            _ => {}
+        }
+    }
+
+    /// Asks the main loop to open this Lua rover's file in an editor.
+    fn edit_script(&mut self) {
+        if self.demo {
+            return;
+        }
+        self.save();
+        match self.stem.as_deref().and_then(|s| store::path_of(&self.design, s)) {
+            Some(p) => self.edit_request = Some(p),
+            None => self.say("There is no state folder to keep the script in"),
+        }
+    }
+
+    /// Back from the editor: read the script again and say how it looks.
+    pub fn after_edit(&mut self, path: &std::path::Path, how: Result<(), String>) {
+        if let Err(e) = how {
+            self.say(e);
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            self.say("The script file has gone missing");
+            return;
+        };
+        let stem = self.stem.clone().unwrap_or_default();
+        self.design = Design::from_lua(&text, &stem);
+        self.save();
+        match LuaBrain::new(&text) {
+            Ok(_) => self.say("The script loads. r runs it"),
+            Err(e) => self.say(format!("The script will not load: {e}")),
+        }
+        log::info!("script edited, {} lines", text.lines().count());
+    }
+
+    /// Turns the wiring into a new Lua rover beside it, and opens that.
+    fn compile_to_lua(&mut self) {
+        let script = lua::compile(&self.design);
+        let mut d = Design::from_lua(&script, &self.design.name);
+        d.name = design::clean_name(&format!("{} Lua", self.design.name));
+        self.stem = None;
+        self.design = d;
+        self.undo.clear();
+        self.lua_scroll = 0;
+        self.save();
+        if !self.demo {
+            self.garage = store::garage();
+        }
+        log::info!("compiled to Lua as {:?}", self.design.name);
+        self.say(format!("Compiled to Lua as {}: e edits it, r runs it", self.design.name));
     }
 
     fn league_key(&mut self, k: KeyEvent) {
@@ -451,6 +547,16 @@ impl App {
                 }
             }
             KeyCode::Char('n') => self.popup = Some(Popup::Name { buf: String::new(), new: true }),
+            KeyCode::Char('l') => {
+                let mut d = Design::from_lua(crate::lua::STARTER, "Scribbler");
+                if !self.demo {
+                    d.name = design::clean_name(&d.name);
+                    let stem = store::save(&d, None);
+                    self.garage = store::garage();
+                    self.sel = self.garage.iter().position(|g| Some(&g.stem) == stem.as_ref()).unwrap_or(0);
+                }
+                self.say(format!("{} is in the garage: a rover in plain Lua. Enter opens it, e edits it", d.name));
+            }
             KeyCode::Char('c') => {
                 if let Some(Stored { design: Ok(d), .. }) = self.garage.get(self.sel) {
                     let mut d = d.clone();
@@ -511,10 +617,6 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => (1, 0),
             KeyCode::Up | KeyCode::Char('k') => (0, -1),
             KeyCode::Down | KeyCode::Char('j') => (0, 1),
-            KeyCode::Char('H') => (-4, 0),
-            KeyCode::Char('L') => (4, 0),
-            KeyCode::Char('K') => (0, -4),
-            KeyCode::Char('J') => (0, 4),
             _ => return false,
         };
         if let Mode::Move { id, .. } = self.mode {
@@ -597,6 +699,7 @@ impl App {
                     }
                 }
                 KeyCode::Char('w') => self.start_wire(),
+                KeyCode::Char('L') => self.compile_to_lua(),
                 KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => self.delete_here(),
                 KeyCode::Char('u') | KeyCode::Char('z') => self.undo(),
                 KeyCode::Char('r') | KeyCode::F(5) => self.run(),
@@ -751,7 +854,13 @@ impl App {
             }
             return;
         }
-        if !self.arena_view && self.cursor_move(&k) {
+        if !self.arena_view && self.design.lua.is_some() {
+            match k.code {
+                KeyCode::Up => return self.lua_scroll = self.lua_scroll.saturating_sub(1),
+                KeyCode::Down => return self.lua_scroll = self.lua_scroll.saturating_add(1),
+                _ => {}
+            }
+        } else if !self.arena_view && self.cursor_move(&k) {
             return;
         }
         match k.code {
@@ -986,6 +1095,14 @@ impl App {
     // --------------------------------------------------------- mouse
 
     pub fn mouse(&mut self, m: MouseEvent) {
+        if self.design.lua.is_some() && self.screen == Screen::Bench && self.popup.is_none() && !(self.running() && self.arena_view) {
+            match m.kind {
+                MouseEventKind::ScrollUp => self.lua_scroll = self.lua_scroll.saturating_sub(3),
+                MouseEventKind::ScrollDown => self.lua_scroll = self.lua_scroll.saturating_add(3),
+                _ => {}
+            }
+            return;
+        }
         if self.screen != Screen::Bench || self.popup.is_some() || (self.running() && self.arena_view) {
             return;
         }
@@ -1179,5 +1296,28 @@ mod tests {
         assert_eq!((app.screen, app.story_after), (Screen::Story, true));
         key(&mut app, KeyCode::Enter);
         assert_eq!((app.screen, app.league_sel, app.chapter), (Screen::League, 1, None));
+    }
+
+    #[test]
+    fn compile_a_wiring_to_lua_and_run_it() {
+        let mut app = App::new(false);
+        app.screen = Screen::Bench;
+        key(&mut app, KeyCode::Char('L'));
+        assert_eq!(app.design.name, "Homer Lua");
+        assert!(app.design.lua.as_deref().unwrap().contains("function tick()"));
+        key(&mut app, KeyCode::Down);
+        assert_eq!(app.lua_scroll, 1);
+        key(&mut app, KeyCode::Char('r'));
+        assert!(app.running());
+        for _ in 0..120 {
+            app.tick();
+        }
+        assert!(app.sim.as_ref().unwrap().rovers[0].rover.speed() > 0.5, "the compiled Homer drives");
+        key(&mut app, KeyCode::Esc);
+        // a script that will not load does not run
+        app.design = Design::from_lua("function tick( end", "Broken");
+        key(&mut app, KeyCode::Char('r'));
+        assert!(!app.running());
+        assert!(app.msg.as_ref().unwrap().0.contains("will not load"));
     }
 }

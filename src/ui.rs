@@ -88,6 +88,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Screen::Bench => {
             if app.running() && app.arena_view {
                 arena(f, app, area);
+            } else if app.design.lua.is_some() {
+                lua_view(f, app, area);
             } else {
                 bench(f, app, area);
             }
@@ -330,6 +332,17 @@ fn garage(f: &mut Frame, app: &App, area: Rect) {
     let mut info = Vec::new();
     if let Some(g) = app.garage.get(app.sel) {
         match &g.design {
+            Ok(d) if d.lua.is_some() => {
+                let script = d.lua.as_deref().unwrap_or("");
+                info.push(Line::from(Span::styled(d.name.clone(), Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
+                info.push(Line::from(format!("A rover in Lua, {} lines", script.lines().count())));
+                info.push(Line::from(""));
+                for l in script.lines().skip(1).filter(|l| l.starts_with("--")).take(6) {
+                    info.push(Line::from(Span::styled(l.trim_start_matches("--").trim().to_string(), Style::default().fg(DIM))));
+                }
+                info.push(Line::from(""));
+                info.push(Line::from(Span::styled(format!("File: rovers/{}.lua in the state folder; e on the bench opens it in your editor.", g.stem), Style::default().fg(DIM))));
+            }
             Ok(d) => {
                 info.push(Line::from(Span::styled(d.name.clone(), Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
                 info.push(Line::from(format!("{} sensors, {} logic parts, {} wires", d.count(Category::Sensor), d.count(Category::Logic), d.wires.len())));
@@ -351,7 +364,7 @@ fn garage(f: &mut Frame, app: &App, area: Rect) {
         }
     }
     f.render_widget(Paragraph::new(info).wrap(Wrap { trim: true }).block(frame_block("Rover")), side);
-    keys_line(f, foot, &[("Enter", "to the bench"), ("N", "new"), ("C", "copy"), ("D", "delete"), ("Esc", "back")], app.msg.as_ref().map(|m| m.0.as_str()));
+    keys_line(f, foot, &[("Enter", "to the bench"), ("N", "new"), ("L", "new in Lua"), ("C", "copy"), ("D", "delete"), ("Esc", "back")], app.msg.as_ref().map(|m| m.0.as_str()));
 }
 
 fn challenges(f: &mut Frame, app: &App, area: Rect) {
@@ -431,10 +444,10 @@ fn library(f: &mut Frame, app: &App, area: Rect) {
     keys_line(f, foot, &[("↑↓", "browse"), ("Esc", "back")], None);
 }
 
-const HELP: &str = "Every rover is a Mule: a squat ice-crawler with two drive tracks and a gyro. What it does is up to its wiring. Sensors feel the world, logic decides, drive moves. Signals are numbers; 0 is off and anything else is on.
+const HELP: &str = r#"Every rover is a Mule: a squat ice-crawler with two drive tracks and a gyro. What it does is up to its wiring. Sensors feel the world, logic decides, drive moves. Signals are numbers; 0 is off and anything else is on.
 
 THE BENCH
-  arrows / hjkl   move the cursor (Shift or HJKL: faster)
+  arrows / hjkl   move the cursor (Shift: faster)
   Tab, Shift-Tab  jump from part to part
   a, Enter        add a part at the cursor
   Enter, e        set a part's mount, mode or value
@@ -446,6 +459,7 @@ THE BENCH
   u               undo
   r, F5           run the rover in the challenge
   c               next challenge
+  L               compile the wiring to a Lua rover
   n               rename the rover        p   parts library
   g               garage                  Esc back to the title
   Mouse: click a part to drag it, click its output to start a wire, right-click removes.
@@ -455,13 +469,18 @@ THE ARENA
   Tab    the live bench: every wire lit with its signal as the rover runs
   r      run again                              Esc  stop and rewire
 
+LUA
+  Any wiring compiles to Lua with L: a new rover beside the wired one, one line or two per part, that drives exactly as the wiring does. On a Lua rover's bench, e opens the script in your editor ($VISUAL or $EDITOR, else nano, vi or Notepad) and r runs it; print() shows in the live view. In the garage, l starts a rover in plain Lua.
+  Sensors: bumper(side) whisker(side, reach) ranger(side) compass("heading"|"bearing"|"distance") radar("bearing"|"distance") gauge() time(). Drive: tracks(left, right) and gyro(spin), each -1 to 1. Weapons: fire() lob(metres) loaded("pellet"|"lobber"). Helpers: on(x) bit(test) clamp(x) round(x) print(...).
+  Scripts get math, string, table and utf8, nothing that touches files or the system, and at most 50000 instructions a tick; a tick over budget drives nothing and the run goes on.
+
 BATTLES
   Every rover starts with 100 charge. A pellet takes 5, a slush ball 15, and a rover at 0 stalls where it stands. Battle stars come from the charge you have left when you win. The radar finds the nearest rover through walls; the gauge reads your own charge.
 
 FIRST STEPS
   The league on the title screen is a season of seven nights, each a story and a challenge; free play opens every challenge at once. Homer waits in the garage. Run him in Ring Hall (r), watch, then try more power on the tracks, a compass in distance mode to slow for corners, or a ranger to see walls coming.
 
-Rovers are plain text files in the state folder (rovers/*.rover); copy them, share them, edit them by hand.";
+Rovers are plain text files in the state folder (rovers/*.rover); copy them, share them, edit them by hand."#;
 
 fn help(f: &mut Frame, app: &App, area: Rect) {
     let [main, foot] = Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
@@ -664,6 +683,150 @@ fn bench_side(f: &mut Frame, app: &App, area: Rect) {
         l.push(Line::from(format!("best {s:.2} s {}", stars(n))));
     }
     f.render_widget(Paragraph::new(l).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::LEFT).border_style(Style::default().fg(FAINT))), area);
+}
+
+// ----------------------------------------------------------------- lua
+
+const LUA_WORDS: [&str; 22] = ["and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"];
+const LUA_API: [&str; 17] = ["bumper", "whisker", "ranger", "compass", "radar", "gauge", "time", "tracks", "gyro", "fire", "lob", "loaded", "on", "bit", "clamp", "round", "print"];
+
+/// One line of Lua in colour: comments, strings, keywords, the rover's
+/// own calls and numbers.
+fn lua_line(src: &str) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    let chars: Vec<char> = src.chars().collect();
+    let mut i = 0;
+    let mut plain = String::new();
+    let flush = |plain: &mut String, out: &mut Vec<Span<'static>>| {
+        if !plain.is_empty() {
+            out.push(Span::styled(std::mem::take(plain), Style::default().fg(TEXT)));
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            flush(&mut plain, &mut out);
+            out.push(Span::styled(chars[i..].iter().collect::<String>(), Style::default().fg(Color::Rgb(110, 150, 120))));
+            break;
+        }
+        if c == '"' || c == '\'' {
+            flush(&mut plain, &mut out);
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != c {
+                j += if chars[j] == '\\' { 2 } else { 1 };
+            }
+            let end = (j + 1).min(chars.len());
+            out.push(Span::styled(chars[i..end].iter().collect::<String>(), Style::default().fg(AMBER)));
+            i = end;
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let mut j = i;
+            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                j += 1;
+            }
+            let w: String = chars[i..j].iter().collect();
+            let style = if LUA_WORDS.contains(&w.as_str()) {
+                Some(Style::default().fg(Color::Rgb(185, 160, 255)).add_modifier(Modifier::BOLD))
+            } else if LUA_API.contains(&w.as_str()) {
+                Some(Style::default().fg(Color::Rgb(90, 205, 215)))
+            } else {
+                None
+            };
+            match style {
+                Some(st) => {
+                    flush(&mut plain, &mut out);
+                    out.push(Span::styled(w, st));
+                }
+                None => plain.push_str(&w),
+            }
+            i = j;
+            continue;
+        }
+        if c.is_ascii_digit() {
+            flush(&mut plain, &mut out);
+            let mut j = i;
+            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '.') {
+                j += 1;
+            }
+            out.push(Span::styled(chars[i..j].iter().collect::<String>(), Style::default().fg(WIRE_ON)));
+            i = j;
+            continue;
+        }
+        plain.push(c);
+        i += 1;
+    }
+    flush(&mut plain, &mut out);
+    out
+}
+
+fn lua_view(f: &mut Frame, app: &mut App, area: Rect) {
+    let [head, main, foot] = Layout::vertical([Constraint::Length(1), Constraint::Min(8), Constraint::Length(1)]).areas(area);
+    let side_w = if area.width >= 90 { 34 } else { 26 };
+    let [code, side] = Layout::horizontal([Constraint::Min(30), Constraint::Length(side_w)]).areas(main);
+    let ch = &challenge::ALL[app.ch];
+    let script = app.design.lua.clone().unwrap_or_default();
+    let mut hs = vec![
+        Span::styled(" ICEWIRE ", Style::default().fg(Color::Black).bg(ICE).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {} ", app.design.name), Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {} ", ch.name), Style::default().fg(AMBER)),
+        Span::styled(" Lua ", Style::default().fg(DIM)),
+    ];
+    if let Some(sim) = &app.sim {
+        hs.push(Span::styled(format!(" LIVE {:.1} s{} ", sim.secs(), if app.paused { " paused" } else { "" }), Style::default().fg(Color::Black).bg(WIRE_ON)));
+    }
+    f.render_widget(Paragraph::new(Line::from(hs)), head);
+    let lines: Vec<&str> = script.lines().collect();
+    let max_scroll = lines.len().saturating_sub(code.height as usize / 2) as u16;
+    app.lua_scroll = app.lua_scroll.min(max_scroll);
+    let width = lines.len().to_string().len().max(2);
+    let body: Vec<Line> = lines
+        .iter()
+        .enumerate()
+        .skip(app.lua_scroll as usize)
+        .take(code.height as usize)
+        .map(|(n, l)| {
+            let mut spans = vec![Span::styled(format!("{:>width$} ", n + 1), Style::default().fg(FAINT))];
+            spans.extend(lua_line(l));
+            Line::from(spans)
+        })
+        .collect();
+    f.render_widget(Paragraph::new(body), code);
+    // the side: what it is, whether it loads, what it says
+    let mut l = vec![Line::from(Span::styled("A rover in Lua", Style::default().fg(ICE).add_modifier(Modifier::BOLD)))];
+    l.push(Line::from(Span::styled(format!("{} lines, at most {} instructions a tick", lines.len(), crate::lua::BUDGET), Style::default().fg(DIM))));
+    l.push(Line::from(""));
+    match app.sim.as_ref().and_then(|s| s.rovers[0].lua.as_ref()) {
+        Some(lb) => {
+            match &lb.error {
+                Some(e) => l.push(Line::from(Span::styled(e.clone(), Style::default().fg(BAD)))),
+                None => l.push(Line::from(Span::styled("Running", Style::default().fg(GOOD)))),
+            }
+            l.push(Line::from(""));
+            l.push(Line::from(Span::styled("print()", Style::default().fg(DIM))));
+            let console = lb.console.borrow();
+            let room = (side.height as usize).saturating_sub(l.len() + 1);
+            for line in console.iter().skip(console.len().saturating_sub(room)) {
+                l.push(Line::from(line.clone()));
+            }
+        }
+        None if app.sim.is_none() => match crate::lua::LuaBrain::new(&script) {
+            Ok(_) => l.push(Line::from(Span::styled("The script loads.", Style::default().fg(GOOD)))),
+            Err(e) => l.push(Line::from(Span::styled(format!("It will not load: {e}"), Style::default().fg(BAD)))),
+        },
+        None => {}
+    }
+    if app.sim.is_none() {
+        l.push(Line::from(""));
+        l.push(Line::from(Span::styled("e opens it in your editor ($EDITOR); save and close to come back. On a wired rover, L compiles its wiring to Lua like this.", Style::default().fg(DIM))));
+    }
+    f.render_widget(Paragraph::new(l).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::LEFT).border_style(Style::default().fg(FAINT))), side);
+    let keys: &[(&str, &str)] = if app.running() {
+        &[("Tab", "arena"), ("↑↓", "scroll"), ("Space", "pause"), ("f", "faster"), ("Esc", "stop")]
+    } else {
+        &[("e", "edit"), ("r", "RUN"), ("↑↓ PgDn", "scroll"), ("c", "challenge"), ("n", "rename"), ("g", "garage"), ("?", "help")]
+    };
+    keys_line(f, foot, keys, app.msg.as_ref().map(|m| m.0.as_str()));
 }
 
 // --------------------------------------------------------------- arena
@@ -920,6 +1083,16 @@ fn arena_side(f: &mut Frame, app: &App, sim: &Sim, area: Rect) {
     l.push(Line::from(Span::styled(e.design.name.clone(), Style::default().fg(ME).add_modifier(Modifier::BOLD))));
     l.push(Line::from(vec![Span::styled("Speed  ", Style::default().fg(DIM)), Span::raw(format!("{:.1} m/s", r.speed()))]));
     l.push(Line::from(vec![Span::styled("Facing ", Style::default().fg(DIM)), Span::raw(format!("{:.0}°", r.heading_deg()))]));
+    if let Some(lb) = &e.lua {
+        l.push(Line::from(""));
+        match &lb.error {
+            Some(err) => l.push(Line::from(Span::styled(err.chars().take(area.width as usize * 2).collect::<String>(), Style::default().fg(BAD)))),
+            None => l.push(Line::from(Span::styled("Lua", Style::default().fg(DIM)))),
+        }
+        for line in lb.console.borrow().iter().rev().take(4).collect::<Vec<_>>().into_iter().rev() {
+            l.push(Line::from(Span::styled(line.chars().take(area.width as usize).collect::<String>(), Style::default().fg(TEXT))));
+        }
+    }
     let sensors: Vec<(usize, &Part)> = e.design.parts.iter().enumerate().filter(|(_, p)| p.kind.category() == Category::Sensor).collect();
     if !sensors.is_empty() {
         l.push(Line::from(""));
@@ -1090,6 +1263,11 @@ mod tests {
             app.screen = Screen::Bench;
             let text = screen_text(&mut app, w, h);
             assert!(text.contains("┌Compass"), "{text}");
+            let wired = app.design.clone();
+            app.design = crate::design::Design::from_lua(&crate::lua::compile(&wired), "x");
+            let text = screen_text(&mut app, w, h);
+            assert!(text.contains("Icewire rover: Homer"), "{text}");
+            app.design = wired;
             for ch in 0..challenge::ALL.len() {
                 app.ch = ch;
                 app.run();
