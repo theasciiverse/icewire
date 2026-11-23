@@ -2,6 +2,7 @@
 //! it out on the ice of Europa.
 
 mod app;
+mod bot;
 mod brain;
 mod campaign;
 mod challenge;
@@ -9,9 +10,11 @@ mod design;
 mod geom;
 mod lua;
 mod parts;
+mod replay;
 mod route;
 mod sim;
 mod store;
+mod tournament;
 mod ui;
 
 use app::{App, Screen};
@@ -34,6 +37,9 @@ the night league's challenges on Europa. In the game, ? shows the keys.
                    ring-hall, cold-stores, puck,
                    boiler-room, long-window, laundry or dome
   --demo           watch a short tour (nothing is saved)
+  --replay FILE    watch a saved match
+  --tournament ... rovers and bots fight each other headless; see
+                   icewire --tournament --help
   --version
 
 Rovers are plain text in $XDG_STATE_HOME/icewire/rovers/ (~/.local/state/...),
@@ -83,7 +89,19 @@ fn tour() -> Vec<(u32, Step)> {
 fn main() -> ExitCode {
     let mut demo = false;
     let mut challenge = None;
+    let mut replay_file = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(at) = args.iter().position(|a| a == "--tournament") {
+        let _ = init_logging();
+        log::info!("{} tournament", version());
+        return match tournament::main(&args[at + 1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("icewire: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -96,6 +114,20 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--demo" => demo = true,
+            "--replay" => {
+                let Some(f) = args.get(i + 1) else {
+                    eprintln!("icewire: --replay needs a replay file");
+                    return ExitCode::from(2);
+                };
+                match std::fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| replay::Replay::parse(&t)) {
+                    Ok(r) => replay_file = Some(r),
+                    Err(e) => {
+                        eprintln!("icewire: {f}: {e}");
+                        return ExitCode::from(2);
+                    }
+                }
+                i += 1;
+            }
             "--challenge" => {
                 let Some(id) = args.get(i + 1) else {
                     eprintln!("icewire: --challenge needs a challenge id (see --help)");
@@ -126,6 +158,9 @@ fn main() -> ExitCode {
     if let Some(c) = challenge {
         app.ch = c;
         app.screen = Screen::Bench;
+    }
+    if let Some(r) = replay_file {
+        app.watch(r);
     }
     let mut terminal = ratatui::init();
     let _ = execute!(io::stdout(), EnableMouseCapture);

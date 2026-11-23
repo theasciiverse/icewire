@@ -5,12 +5,15 @@
 use crate::brain::{Brain, Drive};
 use crate::challenge::{self, Challenge, Goal};
 use crate::design::Design;
+use crate::bot::BotBrain;
 use crate::lua::LuaBrain;
 use crate::geom::{deg, dir, heading_of, rad, wrap};
 use crate::parts::{Kind, Mount, RANGER_MAX};
 use std::collections::VecDeque;
 
 pub const TICKS_PER_SEC: u32 = 60;
+/// How long a bot has to answer each tick, unless a tournament says otherwise.
+pub const BOT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 pub const DT: f64 = 1.0 / TICKS_PER_SEC as f64;
 /// Rover radius in metres; a tile is a metre.
 pub const RADIUS: f64 = 0.35;
@@ -234,6 +237,10 @@ pub struct Entry {
     pub rover: Rover,
     /// A Lua rover's running script.
     pub lua: Option<LuaBrain>,
+    /// A bot rover's running program.
+    pub bot: Option<BotBrain>,
+    /// Whether the bot's end has been put in the feed.
+    bot_out_told: bool,
     /// The last script error put in the feed, so it is not repeated.
     last_error: Option<String>,
 }
@@ -297,6 +304,17 @@ pub struct Sim {
 impl Sim {
     pub fn new(ch_index: usize, player: Design) -> Sim {
         let ch = &challenge::ALL[ch_index];
+        let mut entrants = vec![player];
+        if let Some(src) = ch.opponent {
+            entrants.push(Design::from_text(src).expect("built-in rover"));
+        }
+        Sim::with(ch_index, entrants, BOT_TIMEOUT)
+    }
+
+    /// A run with these rovers at the challenge's starting spots (the
+    /// first is the player's), bots allowed `timeout` a tick.
+    pub fn with(ch_index: usize, entrants: Vec<Design>, timeout: std::time::Duration) -> Sim {
+        let ch = &challenge::ALL[ch_index];
         let arena = Arena::parse(ch);
         let mut rovers = Vec::new();
         let mut events = vec![(0, format!("{}: go!", ch.name))];
@@ -310,11 +328,20 @@ impl Sim {
                 }
                 None => None,
             };
-            rovers.push(Entry { brain: Brain::new(&d), design: d, rover: Rover::new(x, y, ch.headings[i]), lua, last_error: None });
+            let bot = match &d.bot {
+                Some(spec) => match BotBrain::start(spec, &d.name, ch.id, timeout) {
+                    Ok(b) => Some(b),
+                    Err(e) => {
+                        events.push((0, format!("{}'s bot will not start: {e}", d.name)));
+                        None
+                    }
+                },
+                None => None,
+            };
+            rovers.push(Entry { brain: Brain::new(&d), design: d, rover: Rover::new(x, y, ch.headings[i.min(1)]), lua, bot, bot_out_told: false, last_error: None });
         };
-        add(player, 0);
-        if let Some(src) = ch.opponent {
-            add(Design::from_text(src).expect("built-in rover"), 1);
+        for (i, d) in entrants.into_iter().enumerate().take(2) {
+            add(d, i);
         }
         Sim { ch, arena, rovers, tick: 0, outcome: Outcome::Running, events, beams: Vec::new(), pellets: Vec::new(), lobs: Vec::new(), splashes: Vec::new() }
     }
@@ -477,7 +504,7 @@ impl Sim {
     }
 
     fn who(&self, i: usize) -> String {
-        if i == 0 { "your rover".to_string() } else { self.rovers[i].design.name.clone() }
+        self.rovers[i].design.name.clone()
     }
 
     /// Takes charge off rover `j`, and stalls it at 0.
@@ -600,9 +627,38 @@ impl Sim {
             return;
         }
         self.beams.clear();
-        // 1. every rover thinks
+        // 1. every rover thinks: bots hear this tick's readings first, the
+        // rest think, then the bots' answers are taken, all before anyone
+        // moves
+        for i in 0..self.rovers.len() {
+            if self.rovers[i].rover.active()
+                && let Some(mut bot) = self.rovers[i].bot.take()
+            {
+                bot.send(self, i);
+                self.rovers[i].bot = Some(bot);
+            }
+        }
+        let mut deadline = None;
         for i in 0..self.rovers.len() {
             if !self.rovers[i].rover.active() {
+                continue;
+            }
+            if let Some(mut bot) = self.rovers[i].bot.take() {
+                let timeout = bot.timeout;
+                let drive = bot.collect(*deadline.get_or_insert_with(|| std::time::Instant::now() + timeout));
+                if let Some(why) = &bot.dead
+                    && !self.rovers[i].bot_out_told
+                {
+                    let name = self.rovers[i].design.name.clone();
+                    self.events.push((self.tick, format!("{name}'s bot is out: {why}")));
+                    self.rovers[i].bot_out_told = true;
+                }
+                self.rovers[i].bot = Some(bot);
+                self.rovers[i].rover.drive = drive;
+                continue;
+            }
+            if self.rovers[i].design.bot.is_some() {
+                self.rovers[i].rover.drive = Drive::default();
                 continue;
             }
             if let Some(mut lua) = self.rovers[i].lua.take() {
@@ -746,7 +802,7 @@ impl Sim {
                 let (dx, dy) = (r.x - cx, r.y - cy);
                 if dx * dx + dy * dy > rr * rr {
                     r.fell = Some(tick);
-                    let who = if i == 0 { "Your rover".to_string() } else { self.rovers[i].design.name.clone() };
+                    let who = self.rovers[i].design.name.clone();
                     self.events.push((tick, format!("{who} slides off the ring")));
                 }
             }

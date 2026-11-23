@@ -6,8 +6,9 @@
 # On the pattern of tspace's. Tags look like v0.1.0. Icewire has no sound
 # or gamepad libraries, and its Lua 5.4 is compiled into the binary from
 # source (mlua's vendored feature, through musl-gcc on Linux), so Linux
-# builds are static musl binaries that run on any distribution. Each archive holds the binary at
-# the top, where av looks for it, with README.md and LICENSE.
+# builds are static musl binaries that run on any distribution. Each
+# archive holds the binary at the top, where av looks for it, with
+# README.md, LICENSE, PROTOCOL.md and the example bots in examples/.
 
 name: release
 
@@ -61,7 +62,8 @@ jobs:
       - name: Package for av
         run: |
           mkdir -p stage dist
-          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE stage/
+          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE PROTOCOL.md stage/
+          cp -r examples stage/
           tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
 
       - uses: actions/upload-artifact@v4
@@ -93,7 +95,8 @@ jobs:
       - name: Package
         run: |
           mkdir -p stage dist
-          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE stage/
+          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE PROTOCOL.md stage/
+          cp -r examples stage/
           tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
 
       - uses: actions/upload-artifact@v4
@@ -128,7 +131,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p stage dist
-          cp target/${{ matrix.target }}/release/$BIN.exe README.md LICENSE stage/
+          cp target/${{ matrix.target }}/release/$BIN.exe README.md LICENSE PROTOCOL.md stage/
+          cp -r examples stage/
           (cd stage && 7z a -tzip "../dist/$ID-${{ matrix.target }}.zip" .)
 
       - uses: actions/upload-artifact@v4

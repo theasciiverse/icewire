@@ -138,11 +138,60 @@ string, table and utf8, nothing that touches files or the system, and at
 most 50,000 instructions a tick. A tick over budget drives nothing, and
 the run goes on.
 
+## Bots: any language at all
+
+When Lua is not enough, or you would rather write in something else, a
+rover can be driven by any program at all. Icewire starts it, writes the
+rover's readings to its standard input sixty times a second, and reads
+its commands from its standard output:
+
+```
+tick 120                                   tracks 0.8 0.8
+ranger nose 3.2 right 0.8 tail 8 left 0.6  gyro -0.2
+compass heading 90 bearing -12.5 ...       fire
+radar bearing 33 distance 5.1              end
+charge 100
+...
+end
+```
+
+[PROTOCOL.md](PROTOCOL.md) has every line; it is versioned, and the first
+line each way says which version is spoken. Two bots come in `examples/`:
+**Shellby**, in plain POSIX shell with nothing but builtins, and
+**Dodger**, in Python, which weaves, lobs from range and backs off when it
+is hurt, and beats Sprocket and Kettle. **B** in the garage makes a bot
+rover from Dodger; on its bench, **e** edits its command, and during a run
+anything the bot writes to standard error shows beside the arena.
+
+Bots are kept honest: every bot hears a tick before any answer is read,
+and every rover moves together after. A bot has 100 ms to answer; a late
+answer is skipped, and a bot that stays silent for half a second, ends,
+or stops reading is out, its rover standing still. When the run ends,
+Icewire stops the bot and anything it started.
+
+### Tournaments
+
+```
+icewire --tournament dodger shellby kettle nightjar
+icewire --tournament --challenge dome "python3 my_bot.py" my-rover.lua sprocket
+```
+
+Rovers of every kind (built-in names, `.rover`, `.lua` and `.bot` files,
+or a quoted command line) fight every other rover twice, once from each
+side, with nobody watching, as fast as the bots can answer. The standings
+come out at the end, and every match is saved as a replay in the state
+folder's `replays/`:
+
+```
+icewire --replay ~/.local/state/icewire/replays/tournament-.../match-03-dodger-vs-kettle.replay
+```
+
 ## Rovers are text
 
 Every rover is a plain text file in `$XDG_STATE_HOME/icewire/rovers/`
 (`~/.local/state/icewire/rovers/` on most systems), saved as you work: a
-`.rover` file for a wired rover, a `.lua` file for a Lua one.
+`.rover` file for a wired rover, a `.lua` file for a Lua one, a `.bot`
+file for a bot.
 Copy one to a friend, or open it in an editor:
 
 ```
@@ -169,6 +218,8 @@ any machine.
 icewire                      the title screen
 icewire --challenge puck     straight to the bench with a challenge picked
 icewire --demo               a short tour; nothing is saved
+icewire --tournament ...     rovers and bots fight headless (--help for more)
+icewire --replay FILE        watch a saved match
 ```
 
 ## Building

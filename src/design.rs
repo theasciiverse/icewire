@@ -8,6 +8,8 @@ pub const BENCH_H: i32 = 60;
 pub const FORMAT: &str = "icewire rover 1";
 /// The first line of a Lua rover file.
 pub const LUA_HEADER: &str = "-- Icewire rover:";
+/// The format line of a bot rover file.
+pub const BOT_FORMAT: &str = "icewire bot 1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
@@ -77,12 +79,21 @@ pub struct Design {
     pub wires: Vec<Wire>,
     /// A Lua rover's script; then the parts and wires are empty.
     pub lua: Option<String>,
+    /// A bot rover: an outside program on the line protocol.
+    pub bot: Option<BotSpec>,
+}
+
+/// How to start a bot: its command line, and the folder it starts in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BotSpec {
+    pub command: String,
+    pub dir: Option<std::path::PathBuf>,
 }
 
 impl Design {
     /// A bare Mule: just its drive, waiting for wiring.
     pub fn blank(name: &str) -> Design {
-        let mut d = Design { name: name.to_string(), parts: Vec::new(), wires: Vec::new(), lua: None };
+        let mut d = Design { name: name.to_string(), parts: Vec::new(), wires: Vec::new(), lua: None, bot: None };
         let _ = d.add(Kind::TrackLeft, 60, 2);
         let _ = d.add(Kind::TrackRight, 60, 8);
         let _ = d.add(Kind::Gyro, 60, 14);
@@ -93,7 +104,43 @@ impl Design {
     /// `-- Icewire rover: Sleet`, else from `fallback`.
     pub fn from_lua(script: &str, fallback: &str) -> Design {
         let name = script.lines().next().and_then(|l| l.strip_prefix(LUA_HEADER)).map(|n| clean_name(n.trim())).unwrap_or_else(|| clean_name(fallback));
-        Design { name, parts: Vec::new(), wires: Vec::new(), lua: Some(script.to_string()) }
+        Design { name, parts: Vec::new(), wires: Vec::new(), lua: Some(script.to_string()), bot: None }
+    }
+
+    /// A bot rover from its `.bot` file; `dir` is where its command runs.
+    pub fn from_bot(text: &str, fallback: &str, dir: Option<std::path::PathBuf>) -> Result<Design, String> {
+        let mut name = clean_name(fallback);
+        let mut command = None;
+        let mut header = false;
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with("icewire bot") {
+                if line != BOT_FORMAT {
+                    return Err(format!("line {}: made by a newer Icewire", n + 1));
+                }
+                header = true;
+            } else if let Some(v) = line.strip_prefix("name ") {
+                name = clean_name(v);
+            } else if let Some(v) = line.strip_prefix("run ") {
+                command = Some(v.trim().to_string());
+            } else {
+                return Err(format!("line {}: unknown line {line:?}", n + 1));
+            }
+        }
+        if !header {
+            return Err(format!("not a bot file (no \"{BOT_FORMAT}\" line)"));
+        }
+        let command = command.filter(|c| !c.is_empty()).ok_or("no \"run\" line saying how to start the bot")?;
+        Ok(Design { name, parts: Vec::new(), wires: Vec::new(), lua: None, bot: Some(BotSpec { command, dir }) })
+    }
+
+    /// A bot rover's file.
+    pub fn bot_text(&self) -> Option<String> {
+        let b = self.bot.as_ref()?;
+        Some(format!("# An Icewire bot: a program that drives a rover over the line\n# protocol in PROTOCOL.md. The command runs in this folder.\n{BOT_FORMAT}\nname {}\nrun {}\n", self.name, b.command))
     }
 
     /// The script with its first line naming the rover.
@@ -234,7 +281,7 @@ impl Design {
     }
 
     pub fn from_text(text: &str) -> Result<Design, String> {
-        let mut d = Design { name: "Unnamed".into(), parts: Vec::new(), wires: Vec::new(), lua: None };
+        let mut d = Design { name: "Unnamed".into(), parts: Vec::new(), wires: Vec::new(), lua: None, bot: None };
         let mut seen_header = false;
         let mut wires = Vec::new();
         for (n, line) in text.lines().enumerate() {

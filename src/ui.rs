@@ -88,6 +88,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Screen::Bench => {
             if app.running() && app.arena_view {
                 arena(f, app, area);
+            } else if app.design.bot.is_some() {
+                bot_view(f, app, area);
             } else if app.design.lua.is_some() {
                 lua_view(f, app, area);
             } else {
@@ -332,6 +334,15 @@ fn garage(f: &mut Frame, app: &App, area: Rect) {
     let mut info = Vec::new();
     if let Some(g) = app.garage.get(app.sel) {
         match &g.design {
+            Ok(d) if d.bot.is_some() => {
+                let b = d.bot.as_ref().expect("bot");
+                info.push(Line::from(Span::styled(d.name.clone(), Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
+                info.push(Line::from("A bot: a program of your own, on the line protocol"));
+                info.push(Line::from(""));
+                info.push(Line::from(vec![Span::styled("runs  ", Style::default().fg(DIM)), Span::raw(b.command.clone())]));
+                info.push(Line::from(""));
+                info.push(Line::from(Span::styled(format!("File: rovers/{}.bot in the state folder.", g.stem), Style::default().fg(DIM))));
+            }
             Ok(d) if d.lua.is_some() => {
                 let script = d.lua.as_deref().unwrap_or("");
                 info.push(Line::from(Span::styled(d.name.clone(), Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
@@ -364,7 +375,7 @@ fn garage(f: &mut Frame, app: &App, area: Rect) {
         }
     }
     f.render_widget(Paragraph::new(info).wrap(Wrap { trim: true }).block(frame_block("Rover")), side);
-    keys_line(f, foot, &[("Enter", "to the bench"), ("N", "new"), ("L", "new in Lua"), ("C", "copy"), ("D", "delete"), ("Esc", "back")], app.msg.as_ref().map(|m| m.0.as_str()));
+    keys_line(f, foot, &[("Enter", "to the bench"), ("N", "new"), ("L", "new in Lua"), ("B", "new bot"), ("C", "copy"), ("D", "delete"), ("Esc", "back")], app.msg.as_ref().map(|m| m.0.as_str()));
 }
 
 fn challenges(f: &mut Frame, app: &App, area: Rect) {
@@ -473,6 +484,10 @@ LUA
   Any wiring compiles to Lua with L: a new rover beside the wired one, one line or two per part, that drives exactly as the wiring does. On a Lua rover's bench, e opens the script in your editor ($VISUAL or $EDITOR, else nano, vi or Notepad) and r runs it; print() shows in the live view. In the garage, l starts a rover in plain Lua.
   Sensors: bumper(side) whisker(side, reach) ranger(side) compass("heading"|"bearing"|"distance") radar("bearing"|"distance") gauge() time(). Drive: tracks(left, right) and gyro(spin), each -1 to 1. Weapons: fire() lob(metres) loaded("pellet"|"lobber"). Helpers: on(x) bit(test) clamp(x) round(x) print(...).
   Scripts get math, string, table and utf8, nothing that touches files or the system, and at most 50000 instructions a tick; a tick over budget drives nothing and the run goes on.
+
+BOTS
+  A bot is a program of your own, in any language, that drives a rover over plain text lines: Icewire writes its readings to the program's standard input sixty times a second and reads commands back from its standard output. B in the garage makes a bot rover from the Dodger example; e on its bench edits its command. PROTOCOL.md (beside the game) has every line. A bot gets 100 ms a tick and is out after 30 silent ticks in a row.
+  icewire --tournament ROVER ROVER... runs rovers and bots against each other with nobody watching and saves every match as a replay; icewire --replay FILE watches one.
 
 BATTLES
   Every rover starts with 100 charge. A pellet takes 5, a slush ball 15, and a rover at 0 stalls where it stands. Battle stars come from the charge you have left when you win. The radar finds the nearest rover through walls; the gauge reads your own charge.
@@ -829,6 +844,90 @@ fn lua_view(f: &mut Frame, app: &mut App, area: Rect) {
     keys_line(f, foot, keys, app.msg.as_ref().map(|m| m.0.as_str()));
 }
 
+// ---------------------------------------------------------------- bots
+
+const PROTOCOL_BRIEF: &str = "Icewire starts the program and writes \"icewire-bot 1\", the rover's name and the challenge, then \"end\"; the bot answers \"icewire-bot 1\". Then, sixty times a second, Icewire writes a block of readings:
+
+tick 120
+time 2
+ranger nose 3.2 right 0.8 tail 8 left 0.6
+bumper nose 0 right 0 tail 0 left 0
+compass heading 90 bearing -12.5 distance 14.2
+radar bearing 33 distance 5.1
+charge 100
+loaded pellet 1 lobber 0
+speed 1.92
+end
+
+and the bot answers with any of these, then \"end\":
+
+tracks LEFT RIGHT   each -1 to 1
+gyro SPIN           -1 to 1, positive turns right
+fire
+lob METRES
+
+Whatever it writes to standard error shows here during a run. A bot gets 100 ms a tick; one that goes quiet for 30 ticks in a row, or ends, is out. PROTOCOL.md has it all.";
+
+fn bot_view(f: &mut Frame, app: &mut App, area: Rect) {
+    let [head, main, foot] = Layout::vertical([Constraint::Length(1), Constraint::Min(8), Constraint::Length(1)]).areas(area);
+    let side_w = if area.width >= 90 { 34 } else { 26 };
+    let [doc, side] = Layout::horizontal([Constraint::Min(30), Constraint::Length(side_w)]).areas(main);
+    let ch = &challenge::ALL[app.ch];
+    let spec = app.design.bot.clone().expect("bot");
+    let mut hs = vec![
+        Span::styled(" ICEWIRE ", Style::default().fg(Color::Black).bg(ICE).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {} ", app.design.name), Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {} ", ch.name), Style::default().fg(AMBER)),
+        Span::styled(" bot ", Style::default().fg(DIM)),
+    ];
+    if let Some(sim) = &app.sim {
+        hs.push(Span::styled(format!(" LIVE {:.1} s{} ", sim.secs(), if app.paused { " paused" } else { "" }), Style::default().fg(Color::Black).bg(WIRE_ON)));
+    }
+    f.render_widget(Paragraph::new(Line::from(hs)), head);
+    let mut l = vec![
+        Line::from(vec![Span::styled("runs   ", Style::default().fg(DIM)), Span::styled(spec.command.clone(), Style::default().fg(AMBER))]),
+        Line::from(vec![Span::styled("in     ", Style::default().fg(DIM)), Span::raw(spec.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_else(|| "the folder Icewire started in".into()))]),
+        Line::from(""),
+    ];
+    for p in PROTOCOL_BRIEF.lines() {
+        l.push(Line::from(Span::styled(p.to_string(), Style::default().fg(if p.starts_with(|c: char| c.is_ascii_lowercase()) { WIRE_ON } else { TEXT }))));
+    }
+    f.render_widget(Paragraph::new(l).wrap(Wrap { trim: false }).scroll((app.lua_scroll, 0)), doc);
+    let mut s = vec![Line::from(Span::styled("A bot", Style::default().fg(ICE).add_modifier(Modifier::BOLD))), Line::from("")];
+    match app.sim.as_ref().map(|sim| &sim.rovers[0]) {
+        Some(e) => {
+            match &e.bot {
+                Some(b) => {
+                    match &b.dead {
+                        Some(why) => s.push(Line::from(Span::styled(format!("Out: {why}"), Style::default().fg(BAD)))),
+                        None => s.push(Line::from(Span::styled("Running", Style::default().fg(GOOD)))),
+                    }
+                    if let Some(c) = &b.confused {
+                        s.push(Line::from(Span::styled(format!("Did not understand: {c}"), Style::default().fg(AMBER))));
+                    }
+                    s.push(Line::from(""));
+                    s.push(Line::from(Span::styled("standard error", Style::default().fg(DIM))));
+                    if let Ok(c) = b.console.lock() {
+                        let room = (side.height as usize).saturating_sub(s.len() + 1);
+                        for line in c.iter().skip(c.len().saturating_sub(room)) {
+                            s.push(Line::from(line.clone()));
+                        }
+                    }
+                }
+                None => {
+                    if let Some(ev) = app.sim.as_ref().and_then(|sim| sim.events.iter().find(|e| e.1.contains("will not start"))) {
+                        s.push(Line::from(Span::styled(ev.1.clone(), Style::default().fg(BAD))));
+                    }
+                }
+            }
+        }
+        None => s.push(Line::from(Span::styled("r starts it in the arena. e edits its command (the .bot file) in your editor. icewire --tournament pits bots against each other with nobody watching.", Style::default().fg(DIM)))),
+    }
+    f.render_widget(Paragraph::new(s).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::LEFT).border_style(Style::default().fg(FAINT))), side);
+    let keys: &[(&str, &str)] = if app.running() { &[("Tab", "arena"), ("Space", "pause"), ("f", "faster"), ("Esc", "stop")] } else { &[("r", "RUN"), ("e", "edit"), ("↑↓", "scroll"), ("c", "challenge"), ("n", "rename"), ("g", "garage"), ("?", "help")] };
+    keys_line(f, foot, keys, app.msg.as_ref().map(|m| m.0.as_str()));
+}
+
 // --------------------------------------------------------------- arena
 
 /// Cells per tile across and down; a tile is 8 by 8 Braille dots.
@@ -845,7 +944,12 @@ fn arena(f: &mut Frame, app: &App, area: Rect) {
     arena_side(f, app, sim, side);
     let ev: Vec<Line> = sim.events.iter().rev().take(2).map(|(t, m)| Line::from(vec![Span::styled(format!(" {:>6.1}s ", *t as f64 / 60.0), Style::default().fg(DIM)), Span::raw(m.clone())])).collect();
     f.render_widget(Paragraph::new(ev), feed);
-    keys_line(f, foot, &[("Space", "pause"), (".", "step"), ("f", "faster"), ("Tab", "live wiring"), ("r", "again"), ("Esc", "stop")], app.msg.as_ref().map(|m| m.0.as_str()));
+    let keys: &[(&str, &str)] = if app.replay.is_some() {
+        &[("Space", "pause"), (".", "step"), ("←→", "skip 5 s"), ("f", "faster"), ("r", "from the start"), ("Esc", "leave")]
+    } else {
+        &[("Space", "pause"), (".", "step"), ("f", "faster"), ("Tab", "live wiring"), ("r", "again"), ("Esc", "stop")]
+    };
+    keys_line(f, foot, keys, app.msg.as_ref().map(|m| m.0.as_str()));
 }
 
 fn draw_map(buf: &mut Buffer, sim: &Sim, view: Rect) {
@@ -1070,7 +1174,7 @@ fn arena_side(f: &mut Frame, app: &App, sim: &Sim, area: Rect) {
                 let c = e.rover.charge;
                 let filled = ((c / crate::sim::CHARGE) * w as f64).round() as usize;
                 let bar: String = "█".repeat(filled) + &"·".repeat(w - filled.min(w));
-                let name: String = if n == 0 { "You".to_string() } else { e.design.name.chars().take(8).collect() };
+                let name: String = if n == 0 && app.replay.is_none() { "You".to_string() } else { e.design.name.chars().take(8).collect() };
                 let col = if c < 30.0 { BAD } else if n == 0 { ME } else { THEM };
                 l.push(Line::from(vec![Span::styled(format!("{name:<9}"), Style::default().fg(DIM)), Span::styled(bar, Style::default().fg(col)), Span::raw(format!(" {c:.0}"))]));
             }
@@ -1079,10 +1183,34 @@ fn arena_side(f: &mut Frame, app: &App, sim: &Sim, area: Rect) {
     if let Some((s, n, _)) = app.records.get(ch.id) {
         l.push(Line::from(vec![Span::styled("Best   ", Style::default().fg(DIM)), Span::raw(format!("{s:.2} s {}", stars(n)))]));
     }
+    if app.replay.is_some() {
+        l.push(Line::from(""));
+        l.push(Line::from(Span::styled("A replay", Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
+        for (n, e) in sim.rovers.iter().enumerate() {
+            l.push(Line::from(Span::styled(e.design.name.clone(), Style::default().fg(if n == 0 { ME } else { THEM }))));
+        }
+        let state = if app.paused { "paused" } else { "" };
+        l.push(Line::from(""));
+        l.push(Line::from(Span::styled(format!("x{}  {state}", SPEEDS[app.speed]), Style::default().fg(AMBER))));
+        f.render_widget(Paragraph::new(l).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::LEFT).border_style(Style::default().fg(FAINT))), area);
+        return;
+    }
     l.push(Line::from(""));
     l.push(Line::from(Span::styled(e.design.name.clone(), Style::default().fg(ME).add_modifier(Modifier::BOLD))));
     l.push(Line::from(vec![Span::styled("Speed  ", Style::default().fg(DIM)), Span::raw(format!("{:.1} m/s", r.speed()))]));
     l.push(Line::from(vec![Span::styled("Facing ", Style::default().fg(DIM)), Span::raw(format!("{:.0}°", r.heading_deg()))]));
+    if let Some(b) = &e.bot {
+        l.push(Line::from(""));
+        match &b.dead {
+            Some(why) => l.push(Line::from(Span::styled(format!("out: {why}"), Style::default().fg(BAD)))),
+            None => l.push(Line::from(Span::styled("bot", Style::default().fg(DIM)))),
+        }
+        if let Ok(c) = b.console.lock() {
+            for line in c.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev() {
+                l.push(Line::from(Span::styled(line.chars().take(area.width as usize).collect::<String>(), Style::default().fg(TEXT))));
+            }
+        }
+    }
     if let Some(lb) = &e.lua {
         l.push(Line::from(""));
         match &lb.error {
@@ -1267,6 +1395,9 @@ mod tests {
             app.design = crate::design::Design::from_lua(&crate::lua::compile(&wired), "x");
             let text = screen_text(&mut app, w, h);
             assert!(text.contains("Icewire rover: Homer"), "{text}");
+            app.design = crate::design::Design::from_bot("icewire bot 1\nname Dodger\nrun python3 dodger.py\n", "x", None).unwrap();
+            let text = screen_text(&mut app, w, h);
+            assert!(text.contains("python3 dodger.py"), "{text}");
             app.design = wired;
             for ch in 0..challenge::ALL.len() {
                 app.ch = ch;

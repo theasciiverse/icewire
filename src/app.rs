@@ -1,6 +1,7 @@
 //! What is on screen and what every key does there.
 
 use crate::campaign;
+use crate::replay::Replay;
 use crate::lua::{self, LuaBrain};
 use crate::challenge::{self, Goal};
 use crate::design::{self, BENCH_H, BENCH_W, Design};
@@ -81,6 +82,10 @@ pub struct App {
     pub sel: usize,
     pub lib_sel: usize,
     pub help_scroll: u16,
+    /// A match being watched, and where in it.
+    pub replay: Option<Replay>,
+    pub replay_frame: usize,
+    replay_sub: u32,
     /// The Lua view's first line on screen.
     pub lua_scroll: u16,
     /// A file to open in the player's editor, for the main loop.
@@ -134,6 +139,9 @@ impl App {
             sel: 0,
             lib_sel: 0,
             help_scroll: 0,
+            replay: None,
+            replay_frame: 0,
+            replay_sub: 0,
             lua_scroll: 0,
             edit_request: None,
             won: if demo { 3 } else { campaign::load() },
@@ -249,6 +257,10 @@ impl App {
                 self.msg = None;
             }
         }
+        if self.replay.is_some() {
+            self.replay_tick();
+            return;
+        }
         let Some(sim) = &mut self.sim else { return };
         if !self.paused && self.result.is_none() {
             for _ in 0..SPEEDS[self.speed] {
@@ -357,7 +369,7 @@ impl App {
             Screen::Bench => {
                 if self.running() {
                     self.run_key(k)
-                } else if self.design.lua.is_some() {
+                } else if self.design.lua.is_some() || self.design.bot.is_some() {
                     self.lua_key(k)
                 } else {
                     self.bench_key(k)
@@ -455,6 +467,17 @@ impl App {
             return;
         };
         let stem = self.stem.clone().unwrap_or_default();
+        if self.design.bot.is_some() {
+            match Design::from_bot(&text, &stem, path.parent().map(|p| p.to_path_buf())) {
+                Ok(d) => {
+                    self.design = d;
+                    self.save();
+                    self.say("Saved. r starts the bot");
+                }
+                Err(e) => self.say(format!("That bot file does not read: {e}")),
+            }
+            return;
+        }
         self.design = Design::from_lua(&text, &stem);
         self.save();
         match LuaBrain::new(&text) {
@@ -547,7 +570,17 @@ impl App {
                 }
             }
             KeyCode::Char('n') => self.popup = Some(Popup::Name { buf: String::new(), new: true }),
-            KeyCode::Char('l') => {
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                let script = crate::tournament::examples().map(|e| e.join("dodger.py")).map(|p| format!("python3 \"{}\"", p.display())).unwrap_or_else(|| "python3 dodger.py".into());
+                let d = Design { name: "Dodger".into(), parts: Vec::new(), wires: Vec::new(), lua: None, bot: Some(design::BotSpec { command: script, dir: store::rovers_dir() }) };
+                if !self.demo {
+                    let stem = store::save(&d, None);
+                    self.garage = store::garage();
+                    self.sel = self.garage.iter().position(|g| Some(&g.stem) == stem.as_ref()).unwrap_or(0);
+                }
+                self.say("A bot rover is in the garage, run by examples/dodger.py. Enter opens it, e edits its command");
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
                 let mut d = Design::from_lua(crate::lua::STARTER, "Scribbler");
                 if !self.demo {
                     d.name = design::clean_name(&d.name);
@@ -839,7 +872,92 @@ impl App {
         }
     }
 
+    /// Starts watching a replay, in the arena view.
+    pub fn watch(&mut self, r: Replay) {
+        log::info!("watching a replay of {} ({} frames)", challenge::ALL[r.challenge].id, r.frames.len());
+        self.ch = r.challenge;
+        let mut stage = r.stage();
+        r.show(0, &mut stage);
+        self.sim = Some(stage);
+        self.replay = Some(r);
+        self.replay_frame = 0;
+        self.replay_sub = 0;
+        self.screen = Screen::Bench;
+        self.arena_view = true;
+        self.paused = false;
+        self.result = None;
+    }
+
+    fn replay_tick(&mut self) {
+        let (Some(r), Some(sim)) = (&self.replay, &mut self.sim) else { return };
+        if !self.paused {
+            self.replay_sub += SPEEDS[self.speed];
+            while self.replay_sub >= crate::replay::EVERY {
+                self.replay_sub -= crate::replay::EVERY;
+                if self.replay_frame + 1 < r.frames.len() {
+                    self.replay_frame += 1;
+                    r.show(self.replay_frame, sim);
+                } else {
+                    self.paused = true;
+                    let m = format!("The end: {}. r watches again, Esc leaves", r.result);
+                    self.say(m);
+                    break;
+                }
+            }
+        }
+    }
+
+    fn replay_key(&mut self, k: KeyEvent) {
+        let Some(r) = &self.replay else { return };
+        let last = r.frames.len().saturating_sub(1);
+        let jump = |f: usize, d: i64| (f as i64 + d).clamp(0, last as i64) as usize;
+        let to = match k.code {
+            KeyCode::Char(' ') | KeyCode::Char('p') => {
+                self.paused = !self.paused;
+                None
+            }
+            KeyCode::Char('.') => {
+                self.paused = true;
+                Some(jump(self.replay_frame, 1))
+            }
+            KeyCode::Right => Some(jump(self.replay_frame, 150)),
+            KeyCode::Left => Some(jump(self.replay_frame, -150)),
+            KeyCode::Char('r') | KeyCode::Home => Some(0),
+            KeyCode::Char('f') | KeyCode::Char('+') => {
+                self.speed = (self.speed + 1) % SPEEDS.len();
+                self.say(format!("Speed x{}", SPEEDS[self.speed]));
+                None
+            }
+            KeyCode::Char('-') => {
+                self.speed = self.speed.saturating_sub(1);
+                None
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.exit = true;
+                None
+            }
+            _ => None,
+        };
+        if let Some(f) = to {
+            // trails are rebuilt from the start
+            let r = self.replay.as_ref().expect("replay");
+            let mut stage = r.stage();
+            for i in 0..=f {
+                r.show(i, &mut stage);
+            }
+            self.sim = Some(stage);
+            self.replay_frame = f;
+            if f == 0 {
+                self.paused = false;
+            }
+        }
+    }
+
     fn run_key(&mut self, k: KeyEvent) {
+        if self.replay.is_some() {
+            self.replay_key(k);
+            return;
+        }
         if self.result.is_some() {
             match k.code {
                 KeyCode::Char('r') | KeyCode::F(5) => self.run(),
@@ -1319,5 +1437,39 @@ mod tests {
         key(&mut app, KeyCode::Char('r'));
         assert!(!app.running());
         assert!(app.msg.as_ref().unwrap().0.contains("will not load"));
+    }
+
+    #[test]
+    fn watching_a_replay() {
+        use crate::replay::{Recorder, Replay};
+        let mut sim = crate::sim::Sim::with(challenge::by_id("boiler-room").unwrap(), vec![Design::from_text(design::SLEET).unwrap(), Design::from_text(design::SPROCKET).unwrap()], crate::sim::BOT_TIMEOUT);
+        let mut rec = Recorder::new(&sim);
+        while sim.outcome == crate::sim::Outcome::Running {
+            sim.step();
+            rec.frame(&sim);
+        }
+        let rp = Replay::parse(&rec.finish("Sleet wins")).unwrap();
+        let frames = rp.frames.len();
+        let mut app = App::new(false);
+        app.watch(rp);
+        for _ in 0..120 {
+            app.tick();
+        }
+        assert_eq!(app.replay_frame, 60, "a frame every two ticks");
+        key(&mut app, KeyCode::Right);
+        assert_eq!(app.replay_frame, 210);
+        key(&mut app, KeyCode::Char('r'));
+        assert_eq!(app.replay_frame, 0);
+        app.speed = 3;
+        for _ in 0..frames {
+            app.tick();
+            if app.paused {
+                break;
+            }
+        }
+        assert!(app.paused, "it stops at the end");
+        assert!(app.msg.as_ref().unwrap().0.contains("Sleet wins"));
+        key(&mut app, KeyCode::Esc);
+        assert!(app.exit);
     }
 }

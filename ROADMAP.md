@@ -74,14 +74,30 @@ Every version ends with a report saying what to try first.
       memory; math.random seeded the same every run; 50000 instructions a
       tick, and a tick over budget drives nothing while the run goes on.
 
-## 0.4.0: the open bot port
+## 0.4.0: the open bot port (built 2026-11-23)
 
-- Any program in any language drives a rover: Icewire writes sensor lines
-  to its stdin each tick and reads actuator lines from its stdout.
-- A versioned, documented line protocol (a header line names the version).
-- Simultaneous resolution per tick (already how the arena works).
-- `icewire --tournament` runs bot against bot headless and saves replays.
-- Two example bots in `examples/`: a shell script and a Python program.
+- [x] **Any program drives a rover.** Icewire writes each tick's readings
+      to the program's standard input and reads commands from its standard
+      output; standard error shows beside the arena. Bot rovers are `.bot`
+      files naming a command; B in the garage makes one.
+- [x] **A versioned, documented line protocol.** `PROTOCOL.md`: a hello
+      both ways carrying `icewire-bot 1`, then a block of readings and a
+      block of commands each tick, every block ending with `end`.
+- [x] **Simultaneous resolution.** Every bot hears a tick before any
+      answer is read, under one shared deadline, and all rovers move
+      together.
+- [x] **Safe with bad bots.** 100 ms a tick (`--timeout` in tournaments),
+      late answers skipped, out after 30 silent ticks, when its output ends
+      or when it stops reading; lines capped and queues bounded; each bot
+      in its own process group, killed and reaped with everything it
+      started. Tests cover silent, quitting, flooding, babbling and
+      wrong-version bots and check nothing is left running.
+- [x] **Tournaments and replays.** `icewire --tournament ROVER...` plays
+      every pair twice, from both sides, headless, with standings; each
+      match is saved as a text replay of states, and `icewire --replay
+      FILE` watches one in the arena view.
+- [x] **Two example bots** in `examples/`: Shellby (POSIX shell, builtins
+      only) and Dodger (Python 3, beats Sprocket and Kettle).
 
 ## 1.0.0
 
