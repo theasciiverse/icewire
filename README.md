@@ -3,10 +3,10 @@
 **Nobody on Conamara Station is supposed to be racing the work rovers.
 Everybody is.**
 
-Under the ice of Europa, with Jupiter filling the long window in Ring Hall,
-the night shift has a league. You get a Mule: a squat ice-crawler with two
-drive tracks, a gyro, eight sensor slots and a logic board. You do not
-drive it. You wire it. Sensors feel the world, logic decides, the tracks
+Under the ice of Europa, with Jupiter filling the long window on the upper
+deck, the night shift has a league. You get a Mule: a squat ice-crawler
+with two drive tracks, a gyro, eight sensor slots, two weapon mounts and a
+logic board. You do not drive it. You wire it. Sensors feel the world, logic decides, the tracks
 move, and then you let go and watch what you built try its best.
 
 Every part is a box on the bench, drawn in line characters, and every wire
@@ -17,6 +17,14 @@ and the tracks ease off for the corner. The arena is top-down in Braille,
 with your rover's sensor beams and trail drawn as it slides across the ice.
 
 ## The night league
+
+On your first night, Ines, who runs the league from a paper notebook,
+pushes a rover into your hands. Seven nights later you are under the dome
+at midnight, facing a matte black rover nobody will admit to wiring. In
+between: Hana and her stopwatch, Oskar who is always faster, Sami and the
+meltwater, and Ruben from comms, who fights in the boiler room and sends
+his daughter forty-minute messages about it. Each night is a scene, a
+challenge and what came after. Free play opens every challenge at once.
 
 - **Ring Hall Run.** One lap of the lower deck, past the laundry and the
   pump columns, eight checkpoints in order. Homer, the rover waiting in
@@ -29,29 +37,47 @@ with your rover's sensor beams and trail drawn as it slides across the ice.
 - **The Puck.** A circle scraped on the pump room floor, a bucket of
   meltwater to make it slick, and Tumbler, Sami's rover, which has never
   been pushed out by a newcomer.
+- **Sparks in the Boiler Room.** The first battle, among the pipes,
+  against Sprocket: it wanders, and it fires when you cross its nose.
+- **The Long Window.** Hana's second course, the whole length of the
+  window with Jupiter turning beyond it, and a hairpin round the stores
+  lift.
+- **Laundry Night.** Kettle keeps its distance, faces you and keeps
+  firing. It lobs when you are far.
+- **Lights Out in the Dome.** Nightjar presses in when you are weak and
+  backs away when it is.
 
-Each one gives a star for finishing and two more for beating the times on
-the wall. Every star is in reach with the parts you have; the third ones
-take a little thought.
+In a battle every rover starts with 100 charge; a pellet takes 5, a ball
+of slush 15, and a rover at 0 stalls where it stands. Each challenge gives
+a star for finishing or winning and two more for beating the times on the
+wall, or in a battle for the charge you still have. Every star is in
+reach with the parts you have; the third ones take some thought.
 
 ## The parts
 
 - **Sensors:** a bumper that feels a touch, a whisker that feels what is
-  near, a ranger that measures how far it is to the first thing ahead, and
-  a compass that knows your heading, or the bearing and distance to the
-  challenge's beacon.
-- **Logic:** AND, OR, NOT, compare, timer, toggle and a number. Signals
-  are numbers, 0 is off and anything else is on. AND passes its second
-  input along while the first is on, so it doubles as a gate.
+  near, a ranger that measures how far it is to the first thing ahead, a
+  compass that knows your heading, or the bearing and distance to the
+  challenge's beacon, a radar that finds the nearest rover through walls,
+  and a gauge that reads your own charge.
+- **Logic:** AND, OR, NOT, compare, timer, toggle, counter, memory and a
+  number. Signals are numbers, 0 is off and anything else is on. AND
+  passes its second input along while the first is on, so it doubles as a
+  gate.
 - **Drive:** left track, right track (each with forward and back inputs)
   and the gyro (right and left).
+- **Weapons:** a pellet gun that fires frozen pellets straight off the
+  nose, and a lobber that throws slush over walls to whatever range you
+  wire into it.
 
 The parts library (P on the bench) has the whole story of each.
 
 ## Playing
 
-From the title, *Wire a rover* puts Homer on the bench. Press R to run him
-in Ring Hall, Tab to watch his wiring live, Esc to stop and rewire.
+From the title, *The league* starts the season: read the night's scene,
+press Enter for the bench, R to run, Tab to watch the wiring live, Esc to
+stop and rewire. *Wire a rover* goes straight to the bench, and *Free
+play* opens every challenge.
 
 | Key | On the bench |
 |---|---|
@@ -98,8 +124,8 @@ wire 2 to 4 fwd
 wire 1 to 5 right
 ```
 
-The same folder holds `records.txt` (your best times), `settings.txt`
-and `session.log`. The arena runs at a fixed 60 ticks a second with its
+The same folder holds `records.txt` (your best results), `league.txt`
+(how far into the season you are), `settings.txt` and `session.log`. The arena runs at a fixed 60 ticks a second with its
 own arithmetic, so the same rover always does exactly the same run, on
 any machine.
 

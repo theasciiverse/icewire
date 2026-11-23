@@ -35,14 +35,25 @@ Every version ends with a report saying what to try first.
 - [x] **Packaging.** README, release workflow (Linux static, macOS,
       Windows), a 100x30 preview, hub entry once it is fun for ten minutes.
 
-## 0.2.0: the league
+## 0.2.0: the league (built 2026-11-23)
 
-- More parts: weapons with simple ballistics, a radar that finds the
-  nearest rover, counters, memory.
-- A battle challenge.
-- Computer-wired opponents of rising skill.
-- The Europa story as a short campaign through the station's hallways,
-  with our own characters.
+- [x] **More parts.** Pellet gun (straight shots with flight time, stopped
+      by walls) and lobber (arcs over walls to a range you wire in, splash
+      on landing); radar (bearing and distance to the nearest rover, through
+      walls); gauge (own charge); counter; memory.
+- [x] **Battles.** 100 charge each, pellets 5, slush 15, stall at 0;
+      stars from the charge left. Three arenas: the Boiler Room, Laundry
+      Night and the Dome.
+- [x] **Computer-wired opponents of rising skill.** Sprocket (wanders,
+      fires when aimed), Kettle (keeps its distance, fires, lobs), Nightjar
+      (presses in when strong, backs off when weak, lobs and fires). Pinned
+      by tests: a plain gunner beats only Sprocket, a gunner with a lobber
+      beats Kettle but not Nightjar, and a tuned fighter beats all three
+      with three stars.
+- [x] **The league.** A first season on Conamara Station, seven nights
+      through the station's halls, each a scene before and after its
+      challenge, with Ines, Hana, Oskar, Sami, Ruben and the director. A
+      second race, the Long Window, under Jupiter.
 
 ## 0.3.0: Lua
 

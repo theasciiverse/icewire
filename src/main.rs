@@ -3,6 +3,7 @@
 
 mod app;
 mod brain;
+mod campaign;
 mod challenge;
 mod design;
 mod geom;
@@ -29,7 +30,8 @@ Wire a rover's sensors, logic and drive on a bench, then send it into
 the night league's challenges on Europa. In the game, ? shows the keys.
 
   --challenge ID   start on the bench with this challenge picked:
-                   ring-hall, cold-stores or puck
+                   ring-hall, cold-stores, puck,
+                   boiler-room, long-window, laundry or dome
   --demo           watch a short tour (nothing is saved)
   --version
 
@@ -53,16 +55,26 @@ fn init_logging() -> Option<PathBuf> {
     Some(path)
 }
 
+/// One step of the demo tour.
+#[derive(Clone, Copy, PartialEq)]
+enum Step {
+    Key(KeyCode),
+    /// Put this rover on the bench.
+    Load(&'static str),
+}
+
 /// The demo tour: keys at ticks (60 a second).
-fn tour() -> Vec<(u32, KeyCode)> {
+fn tour() -> Vec<(u32, Step)> {
     use KeyCode::*;
-    // the bench, a look inside the compare, Ring Hall with the live wiring
-    let mut t = vec![(90, Enter), (170, Tab), (200, Tab), (230, Tab), (260, Tab), (300, Enter), (350, Right), (390, Left), (430, Enter), (470, Char('r'))];
-    t.extend([(830, Tab), (1060, Tab), (1080, Char('f'))]);
-    // then the Puck: Comet eases off near its target, so give it full power first
-    t.extend([(2010, Enter), (2060, Char('c')), (2100, Char('c')), (2150, Tab), (2180, Tab), (2210, Tab), (2260, Enter), (2310, Char('1')), (2360, Enter), (2420, Char('r'))]);
-    t.extend([(2760, Tab), (2940, Tab), (2960, Char('f'))]);
-    t.push((3460, Esc));
+    let k = |t: u32, c: KeyCode| (t, Step::Key(c));
+    // the league, night 4: the story, the bench, the battle with a look
+    // at the live wiring, and what came after
+    let mut t = vec![k(90, Enter), k(150, Down), k(175, Down), k(200, Down), k(260, Enter), k(560, Enter), (561, Step::Load(design::SLEET))];
+    t.extend([k(640, Tab), k(670, Tab), k(740, Char('r')), k(1100, Tab), k(1340, Tab)]);
+    t.extend([k(1600, Enter), k(1850, Enter)]);
+    // night 5: the long window, under Jupiter
+    t.extend([k(1950, Enter), k(2150, Enter), (2151, Step::Load(design::COMET)), k(2230, Char('r')), k(2450, Char('f')), k(2470, Char('f'))]);
+    t.push(k(3200, Esc));
     t
 }
 
@@ -84,11 +96,11 @@ fn main() -> ExitCode {
             "--demo" => demo = true,
             "--challenge" => {
                 let Some(id) = args.get(i + 1) else {
-                    eprintln!("icewire: --challenge needs ring-hall, cold-stores or puck");
+                    eprintln!("icewire: --challenge needs a challenge id (see --help)");
                     return ExitCode::from(2);
                 };
                 let Some(c) = challenge::by_id(id) else {
-                    eprintln!("icewire: no challenge {id}; try ring-hall, cold-stores or puck");
+                    eprintln!("icewire: no challenge {id} (see --help)");
                     return ExitCode::from(2);
                 };
                 challenge = Some(c);
@@ -175,11 +187,17 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result<()>
         if now - next > Duration::from_millis(250) {
             next = now;
         }
-        for (_, k) in script.iter().filter(|(t, _)| *t == tick) {
-            if *k == KeyCode::Esc && tick == script.last().map(|s| s.0).unwrap_or(0) {
+        for (_, step) in script.iter().filter(|(t, _)| *t == tick) {
+            if tick == script.last().map(|s| s.0).unwrap_or(0) {
                 return Ok(());
             }
-            app.key(KeyEvent::new(*k, KeyModifiers::NONE));
+            match *step {
+                Step::Key(k) => app.key(KeyEvent::new(k, KeyModifiers::NONE)),
+                Step::Load(src) => {
+                    app.design = design::Design::from_text(src).expect("demo rover");
+                    app.relayout();
+                }
+            }
             dirty = true;
         }
         app.tick();

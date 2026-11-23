@@ -143,7 +143,8 @@ personal history with the game is worth mentioning in any outreach.)
 
 ## Status
 
-0.1.0, the bench and the arena, built and released 2026-11-23 on rover
+0.2.0, the league, built 2026-11-23 on rover, after 0.1.0, the bench and
+the arena
 (see `ROADMAP.md` for what each version brings, `README.md` for play).
 Conceived 2026-07-02, scout camp. Renamed from RoverMind to Icewire, 2026-07-08.
 
@@ -153,23 +154,28 @@ Icewire uses no MindRover name, text, art, component names or levels, so
 it does not wait on the CogniToy rights research; that research matters
 only if we ever want the MindRover name or content itself.
 
-## Code (0.1.0)
+## Code (0.2.0)
 
 Rust 2024 + Ratatui 0.30, no other runtime crates but `log` and
-`env_logger`. Modules: `parts` (the fourteen parts), `design` (a rover's
-parts and wires, its text format, the built-in rovers Homer, Tumbler and
-Comet), `brain` (evaluates the wiring each tick, sources first, loops read
+`env_logger`. Modules: `parts` (the twenty parts), `design` (a rover's
+parts and wires, its text format, the built-in rovers Homer, Tumbler,
+Sprocket, Kettle, Nightjar, Comet and Sleet), `brain` (evaluates the wiring each tick, sources first, loops read
 last tick), `sim` (tile arena, disc rovers, 60 Hz fixed-step physics,
 sensors, the rules), `geom` (our own sin, cos, atan2, so runs are bit for
 bit the same everywhere), `route` (A* wire routing on the bench),
-`challenge` (the three challenges and their par times), `store` (state
+`challenge` (the seven challenges and their par times or, in battles,
+charge to keep), `campaign` (the league's seven nights and their
+scenes, progress in `league.txt`), `store` (state
 folder; `None` in tests), `app` (screens and keys), `ui` (drawing),
 `main` (loop, session log, `--demo` tour).
 
 Balance is pinned by tests in `sim.rs`: Homer finishes Ring Hall with one
 star, raw power gets two, a gated or ranger-paced rover three; a
 right-hand wall follower gets three in the Cold Stores; Homer loses the
-Puck and a full-power homer wins it with three. Rerun them after any
+Puck and a full-power homer wins it with three; the Long Window has the
+same ladder as Ring Hall; in battles a plain gunner beats only Sprocket, a
+gunner with a lobber beats Kettle but not Nightjar, and a tuned fighter
+gets three stars in all three. Rerun them after any
 physics change. `cargo test trace_maze -- --ignored --nocapture` with
 `ROVER=<file>` and `CH=<challenge>` prints a run's trace for tuning.
 

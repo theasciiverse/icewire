@@ -13,6 +13,10 @@ pub struct Drive {
     pub left: f64,
     pub right: f64,
     pub gyro: f64,
+    /// The pellet gun's fire input is on.
+    pub fire: bool,
+    /// The lobber's fire input is on, aimed at this range.
+    pub lob: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +32,8 @@ pub struct Brain {
     last_in: Vec<f64>,
     timer: Vec<u32>,
     toggle: Vec<bool>,
+    count: Vec<f64>,
+    held: Vec<f64>,
 }
 
 fn on(v: f64) -> bool {
@@ -66,7 +72,7 @@ impl Brain {
             }
         }
         order.extend((0..n).filter(|&i| !done[i]));
-        Brain { order, feeds, out: vec![0.0; n], ins: vec![[0.0; 2]; n], last_in: vec![0.0; n], timer: vec![0; n], toggle: vec![false; n] }
+        Brain { order, feeds, out: vec![0.0; n], ins: vec![[0.0; 2]; n], last_in: vec![0.0; n], timer: vec![0; n], toggle: vec![false; n], count: vec![0.0; n], held: vec![0.0; n] }
     }
 
     /// One tick. `sense` reads sensor part `i` from the world.
@@ -77,8 +83,8 @@ impl Brain {
             let p = &d.parts[i];
             let a = self.feeds[i][0].map(|s| self.out[s]).unwrap_or(0.0);
             let b_wired = self.feeds[i][1].is_some();
-            let b = self.feeds[i][1].map(|s| self.out[s]).unwrap_or(if p.kind == Kind::Compare { p.value } else { 0.0 });
-            self.ins[i] = [a, if b_wired || p.kind == Kind::Compare { b } else { 0.0 }];
+            let b = self.feeds[i][1].map(|s| self.out[s]).unwrap_or(if matches!(p.kind, Kind::Compare | Kind::Lobber) { p.value } else { 0.0 });
+            self.ins[i] = [a, if b_wired || matches!(p.kind, Kind::Compare | Kind::Lobber) { b } else { 0.0 }];
             let rising = on(a) && !on(self.last_in[i]);
             self.last_in[i] = a;
             let v = match p.kind {
@@ -117,6 +123,30 @@ impl Brain {
                         self.toggle[i] = !self.toggle[i];
                     }
                     bit(self.toggle[i])
+                }
+                Kind::Counter => {
+                    if on(b) {
+                        self.count[i] = 0.0;
+                    } else if rising {
+                        self.count[i] += 1.0;
+                    }
+                    self.count[i]
+                }
+                Kind::Memory => {
+                    if on(b) {
+                        self.held[i] = a;
+                    }
+                    self.held[i]
+                }
+                Kind::PelletGun | Kind::Lobber => {
+                    if on(a) {
+                        if p.kind == Kind::PelletGun {
+                            drive.fire = true;
+                        } else {
+                            drive.lob = Some(b.clamp(crate::parts::LOB_MIN, crate::parts::LOB_MAX));
+                        }
+                    }
+                    sense(i)
                 }
                 Kind::Number => p.value,
                 Kind::TrackLeft | Kind::TrackRight | Kind::Gyro => {
@@ -196,7 +226,42 @@ wire 1 to 3 in
         let d = Design::from_text(crate::design::STARTER).unwrap();
         let mut b = Brain::new(&d);
         let drive = b.step(&d, |_| 90.0);
-        assert_eq!(drive, Drive { left: 0.6, right: 0.6, gyro: 1.0 });
+        assert_eq!(drive, Drive { left: 0.6, right: 0.6, gyro: 1.0, ..Drive::default() });
+    }
+
+    #[test]
+    fn counter_counts_and_memory_holds() {
+        let d = rover(
+            "part 1 bumper at 2 2
+part 2 compass at 2 8 mode heading
+part 3 counter at 20 2
+part 4 memory at 20 8
+part 5 pellet-gun at 40 2
+part 6 lobber at 40 8 value 3
+wire 1 to 3 in
+wire 2 to 4 data
+wire 1 to 4 store
+wire 1 to 5 fire
+wire 1 to 6 fire
+",
+        );
+        let mut b = Brain::new(&d);
+        let mut tick = 0;
+        let mut last = Drive::default();
+        for bump in [1.0, 0.0, 1.0, 1.0, 0.0, 1.0] {
+            tick += 1;
+            // the compass reads 10 times the tick; the weapons say loaded
+            last = b.step(&d, |i| match i {
+                0 => bump,
+                1 => tick as f64 * 10.0,
+                _ => 1.0,
+            });
+        }
+        assert_eq!(b.out[2], 3.0, "three bumps");
+        assert_eq!(b.out[3], 60.0, "stored on the last bump");
+        assert!(last.fire);
+        assert_eq!(last.lob, Some(3.0));
+        assert_eq!(b.out[4], 1.0);
     }
 
     #[test]

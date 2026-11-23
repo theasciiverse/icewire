@@ -44,6 +44,11 @@ impl Part {
             Kind::Bumper | Kind::Ranger => self.mount.name().to_string(),
             Kind::Whisker => format!("{} {}m", self.mount.name(), val()),
             Kind::Compass => parts::COMPASS_MODES[self.mode].to_string(),
+            Kind::Radar => parts::RADAR_MODES[self.mode].to_string(),
+            Kind::Gauge => "charge".to_string(),
+            Kind::Lobber => {
+                if b_wired { "aimed".to_string() } else { format!("{}m", val()) }
+            }
             Kind::Compare => {
                 let op = parts::COMPARE_MODES[self.mode];
                 if b_wired { format!("{op} b") } else { format!("{op} {}", val()) }
@@ -110,6 +115,7 @@ impl Design {
                 Err(format!("The Mule's logic board holds {} parts, all taken", parts::LOGIC_SLOTS))
             }
             Category::Drive if self.parts.iter().any(|p| p.kind == kind) => Err(format!("The Mule has one {}, already fitted", kind.name().to_lowercase())),
+            Category::Weapon if self.parts.iter().any(|p| p.kind == kind) => Err(format!("The Mule has one {} mount, already taken", kind.name().to_lowercase())),
             _ => Ok(()),
         }
     }
@@ -315,6 +321,128 @@ wire 2 to 3 fwd
 wire 2 to 4 fwd
 ";
 
+/// Ruben's rover for the boiler room: wanders in wide circles, shies
+/// from walls and fires whenever another rover crosses its nose.
+pub const SPROCKET: &str = "icewire rover 1
+name Sprocket
+part 1 radar at 4 2 mode bearing
+part 2 compare at 22 2 mode > value -12
+part 3 compare at 22 9 mode < value 12
+part 4 and at 40 5
+part 5 pellet-gun at 58 2
+part 6 number at 4 16 value 1
+part 7 track-left at 58 9 value 70
+part 8 track-right at 58 16 value 50
+part 9 whisker at 4 23 mount nose value 1
+part 10 gyro at 58 23 value 100
+wire 1 to 2 a
+wire 1 to 3 a
+wire 2 to 4 a
+wire 3 to 4 b
+wire 4 to 5 fire
+wire 6 to 7 fwd
+wire 6 to 8 fwd
+wire 9 to 10 left
+";
+
+/// Ines's rover for laundry night: turns to face, keeps three or four
+/// metres away, fires whenever it is aimed and lobs when it is far.
+pub const KETTLE: &str = "icewire rover 1
+name Kettle
+part 1 radar at 4 2 mode bearing
+part 2 radar at 4 9 mode distance
+part 3 compare at 22 9 mode > value 4
+part 4 compare at 22 16 mode < value 3
+part 5 compare at 22 2 mode > value -10
+part 6 compare at 40 2 mode < value 10
+part 7 and at 40 9
+part 8 track-left at 58 2 value 60
+part 9 track-right at 58 9 value 60
+part 10 gyro at 58 16 value 3
+part 11 pellet-gun at 58 23
+part 12 and at 40 16
+part 13 lobber at 58 30
+wire 3 to 12 a
+wire 7 to 12 b
+wire 12 to 13 fire
+wire 2 to 13 range
+wire 1 to 10 right
+wire 1 to 5 a
+wire 1 to 6 a
+wire 5 to 7 a
+wire 6 to 7 b
+wire 7 to 11 fire
+wire 2 to 3 a
+wire 2 to 4 a
+wire 3 to 8 fwd
+wire 3 to 9 fwd
+wire 4 to 8 back
+wire 4 to 9 back
+";
+
+/// The dome's mystery rover: fires whenever it is aimed, lobs from range,
+/// presses in while its charge is high and backs away when it is low.
+pub const NIGHTJAR: &str = "icewire rover 1
+name Nightjar
+part 1 radar at 4 2 mode bearing
+part 2 radar at 4 9 mode distance
+part 3 compare at 22 2 mode > value -8
+part 4 compare at 40 2 mode < value 8
+part 5 and at 58 2
+part 6 compare at 22 9 mode > value 3
+part 7 and at 40 9
+part 10 gauge at 4 16
+part 11 compare at 22 23 mode > value 40
+part 12 compare at 22 30 mode > value 2.5
+part 13 and at 40 23
+part 14 not at 40 30
+part 15 track-left at 76 2 value 70
+part 16 track-right at 76 9 value 60
+part 17 gyro at 76 16 value 4
+part 18 pellet-gun at 76 23
+part 19 lobber at 76 30
+wire 1 to 17 right
+wire 1 to 3 a
+wire 1 to 4 a
+wire 3 to 5 a
+wire 4 to 5 b
+wire 2 to 6 a
+wire 6 to 7 a
+wire 5 to 7 b
+wire 7 to 19 fire
+wire 2 to 19 range
+wire 5 to 18 fire
+wire 10 to 11 a
+wire 2 to 12 a
+wire 11 to 13 a
+wire 12 to 13 b
+wire 13 to 15 fwd
+wire 13 to 16 fwd
+wire 11 to 14 in
+wire 14 to 15 back
+wire 14 to 16 back
+";
+
+/// The demo's fighter: heads for the other rover firing pellets, and lobs
+/// slush at whatever distance the compass gives.
+pub const SLEET: &str = "icewire rover 1
+name Sleet
+part 1 compass at 4 2 mode bearing
+part 2 number at 4 9 value 1
+part 3 compass at 4 16 mode distance
+part 4 track-left at 34 2 value 70
+part 5 track-right at 34 8 value 70
+part 6 gyro at 34 14 value 3
+part 7 pellet-gun at 34 20
+part 8 lobber at 34 26
+wire 2 to 4 fwd
+wire 2 to 5 fwd
+wire 1 to 6 right
+wire 2 to 7 fire
+wire 2 to 8 fire
+wire 3 to 8 range
+";
+
 /// The demo's rover: steers for the beacon at full power and eases off
 /// near it, so it makes the corners.
 pub const COMET: &str = "icewire rover 1
@@ -341,7 +469,7 @@ mod tests {
 
     #[test]
     fn text_round_trips() {
-        for src in [STARTER, TUMBLER, COMET] {
+        for src in [STARTER, TUMBLER, COMET, SPROCKET, KETTLE, NIGHTJAR] {
             let d = Design::from_text(src).unwrap();
             let again = Design::from_text(&d.to_text()).unwrap();
             assert_eq!(d, again);

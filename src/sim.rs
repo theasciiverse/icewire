@@ -26,6 +26,19 @@ const TURN_GYRO: f64 = 3.0;
 const TURN_RESPONSE: f64 = 10.0;
 const BOUNCE: f64 = 0.15;
 const TRAIL: usize = 160;
+/// Battle: every rover starts with this much charge.
+pub const CHARGE: f64 = 100.0;
+const PELLET_SPEED: f64 = 7.0;
+const PELLET_RANGE: f64 = 8.0;
+const PELLET_HIT: f64 = 5.0;
+const PELLET_RELOAD: u32 = TICKS_PER_SEC / 2;
+const PELLET_PUSH: f64 = 0.6;
+/// A lob flies this fast over the ground, metres a second.
+const LOB_SPEED: f64 = 5.0;
+pub const LOB_SPLASH: f64 = 1.0;
+const LOB_HIT: f64 = 15.0;
+const LOB_RELOAD: u32 = TICKS_PER_SEC * 2;
+const LOB_PUSH: f64 = 1.2;
 
 pub struct Arena {
     pub w: i32,
@@ -34,6 +47,8 @@ pub struct Arena {
     /// Checkpoint number (1-based) of each tile, 0 for none.
     pub cp: Vec<u8>,
     pub exit: Vec<bool>,
+    /// Wall tiles that are windows (drawn with Jupiter behind them).
+    pub window: Vec<bool>,
     /// Centre of each checkpoint, in order.
     pub cp_centres: Vec<(f64, f64)>,
     pub exit_centre: (f64, f64),
@@ -47,7 +62,7 @@ impl Arena {
         let h = rows.len() as i32;
         let w = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as i32;
         let n = (w * h) as usize;
-        let mut a = Arena { w, h, solid: vec![false; n], cp: vec![0; n], exit: vec![false; n], cp_centres: Vec::new(), exit_centre: (0.0, 0.0), starts: [(1.5, 1.5); 2], ring: None };
+        let mut a = Arena { w, h, solid: vec![false; n], cp: vec![0; n], exit: vec![false; n], window: vec![false; n], cp_centres: Vec::new(), exit_centre: (0.0, 0.0), starts: [(1.5, 1.5); 2], ring: None };
         let mut sums: Vec<(f64, f64, f64)> = Vec::new();
         let mut exit = (0.0, 0.0, 0.0);
         for (y, row) in rows.iter().enumerate() {
@@ -56,6 +71,10 @@ impl Arena {
                 let centre = (x as f64 + 0.5, y as f64 + 0.5);
                 match c {
                     '#' => a.solid[i] = true,
+                    'W' => {
+                        a.solid[i] = true;
+                        a.window[i] = true;
+                    }
                     '1'..='9' => {
                         let k = c as u8 - b'0';
                         a.cp[i] = k;
@@ -162,11 +181,24 @@ pub struct Rover {
     /// Checkpoints passed.
     pub next_cp: usize,
     pub trail: VecDeque<(f64, f64)>,
+    /// Battle charge, and when it ran out.
+    pub charge: f64,
+    pub stalled: Option<u32>,
+    /// Ticks until each weapon is loaded again.
+    pub reload_pellet: u32,
+    pub reload_lob: u32,
+    /// When it was last hit, for the flash.
+    pub hit_at: Option<u32>,
 }
 
 impl Rover {
     fn new(x: f64, y: f64, heading_deg: f64) -> Rover {
-        Rover { x, y, h: rad(heading_deg), vx: 0.0, vy: 0.0, spin: 0.0, drive: Drive::default(), bumps: [false; 4], fell: None, next_cp: 0, trail: VecDeque::new() }
+        Rover { x, y, h: rad(heading_deg), vx: 0.0, vy: 0.0, spin: 0.0, drive: Drive::default(), bumps: [false; 4], fell: None, next_cp: 0, trail: VecDeque::new(), charge: CHARGE, stalled: None, reload_pellet: 0, reload_lob: 0, hit_at: None }
+    }
+
+    /// Still in play: not off the ring, not out of charge.
+    pub fn active(&self) -> bool {
+        self.fell.is_none() && self.stalled.is_none()
     }
 
     pub fn speed(&self) -> f64 {
@@ -210,6 +242,28 @@ pub enum Outcome {
     Draw,
 }
 
+/// A frozen pellet in flight.
+#[derive(Clone, Debug)]
+pub struct Pellet {
+    pub x: f64,
+    pub y: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub owner: usize,
+    pub flown: f64,
+}
+
+/// A ball of slush on its way down.
+#[derive(Clone, Debug)]
+pub struct Lob {
+    pub x0: f64,
+    pub y0: f64,
+    pub x1: f64,
+    pub y1: f64,
+    pub t: u32,
+    pub flight: u32,
+}
+
 /// A sensor beam drawn in the arena: from, to, and whether it hit.
 #[derive(Clone, Copy, Debug)]
 pub struct Beam {
@@ -229,6 +283,10 @@ pub struct Sim {
     pub events: Vec<(u32, String)>,
     /// The player's sensor beams this tick.
     pub beams: Vec<Beam>,
+    pub pellets: Vec<Pellet>,
+    pub lobs: Vec<Lob>,
+    /// Where lobs landed and pellets broke, and when, for the effects.
+    pub splashes: Vec<(f64, f64, u32, bool)>,
 }
 
 impl Sim {
@@ -245,7 +303,7 @@ impl Sim {
             add(Design::from_text(src).expect("built-in rover"), 1);
         }
         let events = vec![(0, format!("{}: go!", ch.name))];
-        Sim { ch, arena, rovers, tick: 0, outcome: Outcome::Running, events, beams: Vec::new() }
+        Sim { ch, arena, rovers, tick: 0, outcome: Outcome::Running, events, beams: Vec::new(), pellets: Vec::new(), lobs: Vec::new(), splashes: Vec::new() }
     }
 
     pub fn secs(&self) -> f64 {
@@ -261,7 +319,7 @@ impl Sim {
                 self.arena.cp_centres.get(n).copied().unwrap_or((0.0, 0.0))
             }
             Goal::Maze => self.arena.exit_centre,
-            Goal::Sumo => {
+            Goal::Sumo | Goal::Battle => {
                 let o = &self.rovers[(i + 1) % self.rovers.len()].rover;
                 (o.x, o.y)
             }
@@ -354,8 +412,166 @@ impl Sim {
                     _ => (dx * dx + dy * dy).sqrt(),
                 }
             }
+            Kind::Radar => match self.nearest(i) {
+                Some((dx, dy)) => {
+                    if part.mode == 0 {
+                        deg(wrap(heading_of(dx, dy) - rh))
+                    } else {
+                        (dx * dx + dy * dy).sqrt()
+                    }
+                }
+                None => {
+                    if part.mode == 0 {
+                        0.0
+                    } else {
+                        99.0
+                    }
+                }
+            },
+            Kind::Gauge => self.rovers[i].rover.charge,
+            Kind::PelletGun => {
+                if self.rovers[i].rover.reload_pellet == 0 { 1.0 } else { 0.0 }
+            }
+            Kind::Lobber => {
+                if self.rovers[i].rover.reload_lob == 0 { 1.0 } else { 0.0 }
+            }
             _ => 0.0,
         }
+    }
+
+    /// The offset to the nearest other rover still in play.
+    fn nearest(&self, i: usize) -> Option<(f64, f64)> {
+        let me = &self.rovers[i].rover;
+        let mut best: Option<(f64, f64, f64)> = None;
+        for (j, e) in self.rovers.iter().enumerate() {
+            if j == i || !e.rover.active() {
+                continue;
+            }
+            let (dx, dy) = (e.rover.x - me.x, e.rover.y - me.y);
+            let d2 = dx * dx + dy * dy;
+            if best.is_none_or(|b| d2 < b.2) {
+                best = Some((dx, dy, d2));
+            }
+        }
+        best.map(|b| (b.0, b.1))
+    }
+
+    fn who(&self, i: usize) -> String {
+        if i == 0 { "your rover".to_string() } else { self.rovers[i].design.name.clone() }
+    }
+
+    /// Takes charge off rover `j`, and stalls it at 0.
+    fn hurt(&mut self, j: usize, amount: f64, what: &str) {
+        let tick = self.tick;
+        let r = &mut self.rovers[j].rover;
+        if !r.active() {
+            return;
+        }
+        r.charge = (r.charge - amount).max(0.0);
+        r.hit_at = Some(tick);
+        let charge = r.charge;
+        if charge <= 0.0 {
+            r.stalled = Some(tick);
+            r.drive = Drive::default();
+            let who = self.who(j);
+            let mut w = who.chars();
+            let who = w.next().map(|c| c.to_uppercase().collect::<String>() + w.as_str()).unwrap_or_default();
+            self.events.push((tick, format!("{what}: {who} is out of charge and stalls")));
+        } else {
+            let who = self.who(j);
+            self.events.push((tick, format!("{what} hits {who}: charge {charge:.0}")));
+        }
+    }
+
+    /// Weapons: fire what was asked for, then move what is in the air.
+    fn weapons(&mut self) {
+        for (i, e) in self.rovers.iter_mut().enumerate() {
+            let r = &mut e.rover;
+            r.reload_pellet = r.reload_pellet.saturating_sub(1);
+            r.reload_lob = r.reload_lob.saturating_sub(1);
+            if !r.active() {
+                continue;
+            }
+            let (fx, fy) = dir(r.h);
+            if r.drive.fire && r.reload_pellet == 0 {
+                r.reload_pellet = PELLET_RELOAD;
+                let nose = RADIUS + 0.05;
+                self.pellets.push(Pellet { x: r.x + fx * nose, y: r.y + fy * nose, vx: fx * PELLET_SPEED + r.vx, vy: fy * PELLET_SPEED + r.vy, owner: i, flown: 0.0 });
+            }
+            if let Some(range) = r.drive.lob
+                && r.reload_lob == 0
+            {
+                r.reload_lob = LOB_RELOAD;
+                let flight = ((range / LOB_SPEED) * TICKS_PER_SEC as f64).round().max(1.0) as u32;
+                self.lobs.push(Lob { x0: r.x, y0: r.y, x1: r.x + fx * range, y1: r.y + fy * range, t: 0, flight });
+            }
+        }
+        // pellets
+        let mut k = 0;
+        while k < self.pellets.len() {
+            let p = &mut self.pellets[k];
+            p.x += p.vx * DT;
+            p.y += p.vy * DT;
+            p.flown += (p.vx * p.vx + p.vy * p.vy).sqrt() * DT;
+            let (px, py, owner) = (p.x, p.y, p.owner);
+            let mut gone = p.flown > PELLET_RANGE;
+            if self.arena.solid(px.floor() as i32, py.floor() as i32) {
+                gone = true;
+                self.splashes.push((px, py, self.tick, false));
+            }
+            if !gone {
+                let hit = (0..self.rovers.len()).find(|&j| {
+                    let r = &self.rovers[j].rover;
+                    j != owner && r.fell.is_none() && (r.x - px).powi(2) + (r.y - py).powi(2) < RADIUS * RADIUS
+                });
+                if let Some(j) = hit {
+                    gone = true;
+                    let p = &self.pellets[k];
+                    let s = (p.vx * p.vx + p.vy * p.vy).sqrt().max(1e-9);
+                    let (ux, uy) = (p.vx / s, p.vy / s);
+                    let r = &mut self.rovers[j].rover;
+                    r.vx += ux * PELLET_PUSH;
+                    r.vy += uy * PELLET_PUSH;
+                    self.splashes.push((px, py, self.tick, false));
+                    if self.ch.goal == Goal::Battle {
+                        self.hurt(j, PELLET_HIT, "A pellet");
+                    }
+                }
+            }
+            if gone {
+                self.pellets.remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        // lobs
+        let mut k = 0;
+        while k < self.lobs.len() {
+            self.lobs[k].t += 1;
+            if self.lobs[k].t < self.lobs[k].flight {
+                k += 1;
+                continue;
+            }
+            let l = self.lobs.remove(k);
+            self.splashes.push((l.x1, l.y1, self.tick, true));
+            for j in 0..self.rovers.len() {
+                let r = &mut self.rovers[j].rover;
+                if r.fell.is_some() {
+                    continue;
+                }
+                let (dx, dy) = (r.x - l.x1, r.y - l.y1);
+                let d = (dx * dx + dy * dy).sqrt();
+                if d < LOB_SPLASH + RADIUS {
+                    let (ux, uy) = if d > 1e-9 { (dx / d, dy / d) } else { (0.0, 0.0) };
+                    r.vx += ux * LOB_PUSH;
+                    r.vy += uy * LOB_PUSH;
+                    if self.ch.goal == Goal::Battle {
+                        self.hurt(j, LOB_HIT, "A slush ball");
+                    }
+                }
+            }
+        }
+        self.splashes.retain(|s| self.tick < s.2 + 30);
     }
 
     /// One fixed step of the whole arena.
@@ -366,7 +582,7 @@ impl Sim {
         self.beams.clear();
         // 1. every rover thinks
         for i in 0..self.rovers.len() {
-            if self.rovers[i].rover.fell.is_some() {
+            if !self.rovers[i].rover.active() {
                 continue;
             }
             let mut brain = self.rovers[i].brain.clone();
@@ -381,7 +597,7 @@ impl Sim {
             if r.fell.is_some() {
                 continue;
             }
-            let Drive { left, right, gyro } = r.drive;
+            let Drive { left, right, gyro, .. } = r.drive;
             let want = (left - right) * TURN_TRACKS + gyro * TURN_GYRO;
             r.spin += (want - r.spin) * (TURN_RESPONSE * DT).min(1.0);
             r.h = wrap(r.h + r.spin * DT);
@@ -473,8 +689,10 @@ impl Sim {
                 }
             }
         }
+        // 5. weapons
+        self.weapons();
         self.tick += 1;
-        // 5. the rules
+        // 6. the rules
         for i in 0..self.rovers.len() {
             let tick = self.tick;
             let r = &mut self.rovers[i].rover;
@@ -523,14 +741,39 @@ impl Sim {
                 if me {
                     self.outcome = Outcome::Lost("pushed out of the ring");
                 } else if them {
-                    self.events.push((self.tick, format!("Tumbler is out! {secs:.2} s")));
+                    let name = self.rovers[1].design.name.clone();
+                    self.events.push((self.tick, format!("{name} is out! {secs:.2} s")));
+                    self.outcome = Outcome::Won(self.tick);
+                }
+            }
+            Goal::Battle => {
+                let them = self.rovers.iter().skip(1).all(|e| e.rover.stalled.is_some());
+                if self.rovers[0].rover.stalled.is_some() && them {
+                    self.outcome = Outcome::Draw;
+                } else if self.rovers[0].rover.stalled.is_some() {
+                    self.outcome = Outcome::Lost("out of charge");
+                } else if self.rovers.iter().skip(1).all(|e| e.rover.stalled.is_some()) {
                     self.outcome = Outcome::Won(self.tick);
                 }
             }
         }
         if self.outcome == Outcome::Running && secs >= self.ch.limit {
-            self.outcome = if self.ch.goal == Goal::Sumo { Outcome::Draw } else { Outcome::Lost("out of time") };
             self.events.push((self.tick, "Time!".to_string()));
+            self.outcome = match self.ch.goal {
+                Goal::Sumo => Outcome::Draw,
+                Goal::Battle => {
+                    let mine = self.rovers[0].rover.charge;
+                    let theirs = self.rovers.iter().skip(1).map(|e| e.rover.charge).fold(0.0, f64::max);
+                    if mine > theirs {
+                        Outcome::Won(self.tick)
+                    } else if mine < theirs {
+                        Outcome::Lost("time ran out with less charge left")
+                    } else {
+                        Outcome::Draw
+                    }
+                }
+                _ => Outcome::Lost("out of time"),
+            };
         }
     }
 
@@ -584,6 +827,123 @@ wire 7 to 10 right
 wire 2 to 10 left
 ";
 
+    /// Heads for the other rover firing all the time.
+    const GUNNER: &str = "icewire rover 1
+name Gunner
+part 1 compass at 4 2 mode bearing
+part 2 number at 4 9 value 1
+part 3 track-left at 34 2 value 50
+part 4 track-right at 34 8 value 50
+part 5 gyro at 34 14 value 3
+part 6 pellet-gun at 34 20
+wire 2 to 3 fwd
+wire 2 to 4 fwd
+wire 1 to 5 right
+wire 2 to 6 fire
+";
+
+    /// The gunner with a lobber aimed by the compass distance.
+    const BRAWLER: &str = "icewire rover 1
+name Brawler
+part 1 compass at 4 2 mode bearing
+part 2 number at 4 9 value 1
+part 3 compass at 4 16 mode distance
+part 4 track-left at 34 2 value 70
+part 5 track-right at 34 8 value 70
+part 6 gyro at 34 14 value 3
+part 7 pellet-gun at 34 20
+part 8 lobber at 34 26
+wire 2 to 4 fwd
+wire 2 to 5 fwd
+wire 1 to 6 right
+wire 2 to 7 fire
+wire 2 to 8 fire
+wire 3 to 8 range
+";
+
+    /// A tunable fighter: approach power, turn, stand-off, back-off, aim.
+    fn fighter(p: u32, g: u32, far: f64, near: f64, aim: f64) -> String {
+        format!(
+            "icewire rover 1
+name Fighter
+part 1 compass at 4 2 mode bearing
+part 2 number at 4 9 value 1
+part 3 compass at 4 16 mode distance
+part 4 track-left at 76 2 value {p}
+part 5 track-right at 76 9 value {p}
+part 6 gyro at 76 16 value {g}
+part 7 pellet-gun at 76 23
+part 8 lobber at 76 30
+part 9 compare at 22 16 mode > value {far}
+part 10 compare at 22 23 mode < value {near}
+part 11 compare at 22 2 mode > value -{aim}
+part 12 compare at 40 2 mode < value {aim}
+part 13 and at 58 2
+wire 1 to 6 right
+wire 1 to 11 a
+wire 1 to 12 a
+wire 11 to 13 a
+wire 12 to 13 b
+wire 13 to 7 fire
+wire 2 to 8 fire
+wire 3 to 8 range
+wire 3 to 9 a
+wire 3 to 10 a
+wire 9 to 4 fwd
+wire 9 to 5 fwd
+wire 10 to 4 back
+wire 10 to 5 back
+"
+        )
+    }
+
+    fn won(s: &Sim) -> bool {
+        matches!(s.outcome, Outcome::Won(_))
+    }
+
+    #[test]
+    fn the_battle_ladder() {
+        // a plain gunner beats Sprocket and nobody else
+        assert!(won(&run("boiler-room", GUNNER)));
+        assert!(!won(&run("laundry", GUNNER)));
+        assert!(!won(&run("dome", GUNNER)));
+        // a lobber as well beats Kettle, but not Nightjar
+        assert!(won(&run("laundry", BRAWLER)));
+        assert!(!won(&run("dome", BRAWLER)));
+        // Homer, unarmed, beats nobody
+        assert!(!won(&run("boiler-room", crate::design::STARTER)));
+    }
+
+    #[test]
+    fn three_stars_in_every_battle() {
+        for (ch, rover) in [("boiler-room", fighter(100, 3, 3.0, 0.0, 10.0)), ("laundry", fighter(80, 6, 0.0, 0.0, 10.0)), ("dome", fighter(100, 3, 0.0, 2.0, 10.0))] {
+            let s = run(ch, &rover);
+            assert!(won(&s), "{ch} {:?}", s.outcome);
+            let charge = s.rovers[0].rover.charge;
+            assert_eq!(s.ch.stars(s.secs(), charge), 3, "{ch}: {charge} left");
+        }
+    }
+
+    #[test]
+    fn battles_repeat_exactly() {
+        let a = run("dome", BRAWLER);
+        let b = run("dome", BRAWLER);
+        assert_eq!(a.tick, b.tick);
+        assert_eq!(a.rovers[1].rover.charge.to_bits(), b.rovers[1].rover.charge.to_bits());
+        assert_eq!(a.rovers[0].rover.x.to_bits(), b.rovers[0].rover.x.to_bits());
+    }
+
+    #[test]
+    fn the_long_window_ladder() {
+        let s = run("long-window", crate::design::STARTER);
+        assert_eq!(s.ch.stars(s.secs(), 100.0), 1, "Homer {:.1}", s.secs());
+        let brute = crate::design::STARTER.replace("value 60", "value 100").replace("gyro at 34 14 value 2", "gyro at 34 14 value 4");
+        let s = run("long-window", &brute);
+        assert_eq!(s.ch.stars(s.secs(), 100.0), 2, "brute {:.1}", s.secs());
+        let s = run("long-window", RACER);
+        assert_eq!(s.ch.stars(s.secs(), 100.0), 3, "racer {:.1}", s.secs());
+    }
+
     #[test]
     fn same_rover_same_run() {
         let a = run("ring-hall", RACER);
@@ -597,7 +957,7 @@ wire 2 to 10 left
     fn starter_finishes_the_race() {
         let s = run("ring-hall", crate::design::STARTER);
         assert!(matches!(s.outcome, Outcome::Won(_)), "{:?} at {:.1} s, cp {}", s.outcome, s.secs(), s.rovers[0].rover.next_cp);
-        assert_eq!(s.ch.stars(s.secs()), 1, "Homer leaves room to improve");
+        assert_eq!(s.ch.stars(s.secs(), s.rovers[0].rover.charge), 1, "Homer leaves room to improve");
         eprintln!("starter race {:.1} s", s.secs());
     }
 
@@ -606,14 +966,14 @@ wire 2 to 10 left
         let brute = crate::design::STARTER.replace("value 60", "value 100").replace("gyro at 34 14 value 2", "gyro at 34 14 value 4");
         let s = run("ring-hall", &brute);
         assert!(matches!(s.outcome, Outcome::Won(_)));
-        assert_eq!(s.ch.stars(s.secs()), 2, "{:.1} s", s.secs());
+        assert_eq!(s.ch.stars(s.secs(), s.rovers[0].rover.charge), 2, "{:.1} s", s.secs());
     }
 
     #[test]
     fn racer_beats_par() {
         let s = run("ring-hall", RACER);
         assert!(matches!(s.outcome, Outcome::Won(_)), "{:?} cp {}", s.outcome, s.rovers[0].rover.next_cp);
-        assert_eq!(s.ch.stars(s.secs()), 3, "three stars are reachable");
+        assert_eq!(s.ch.stars(s.secs(), s.rovers[0].rover.charge), 3, "three stars are reachable");
         eprintln!("racer race {:.1} s", s.secs());
     }
 
@@ -622,7 +982,7 @@ wire 2 to 10 left
         let s = run("cold-stores", FOLLOWER);
         let r = &s.rovers[0].rover;
         assert!(matches!(s.outcome, Outcome::Won(_)), "{:?} at ({:.1},{:.1})", s.outcome, r.x, r.y);
-        assert_eq!(s.ch.stars(s.secs()), 3, "three stars are reachable");
+        assert_eq!(s.ch.stars(s.secs(), s.rovers[0].rover.charge), 3, "three stars are reachable");
         eprintln!("follower maze {:.1} s", s.secs());
     }
 
@@ -633,7 +993,7 @@ wire 2 to 10 left
         let strong = crate::design::STARTER.replace("value 60", "value 100").replace("gyro at 34 14 value 2", "gyro at 34 14 value 4");
         let s = run("puck", &strong);
         assert!(matches!(s.outcome, Outcome::Won(_)), "{:?}", s.outcome);
-        assert_eq!(s.ch.stars(s.secs()), 3, "three stars are reachable");
+        assert_eq!(s.ch.stars(s.secs(), s.rovers[0].rover.charge), 3, "three stars are reachable");
         eprintln!("strong puck {:.1} s", s.secs());
     }
 }
@@ -650,11 +1010,12 @@ mod trace {
         for t in 0..u32::MAX {
             if s.outcome != Outcome::Running { break; }
             s.step();
-            if t % 30 == 0 {
+            if t % 30 == 0 && std::env::var("QUIET").is_err() {
                 let r = &s.rovers[0].rover;
                 eprintln!("{:6.1}s ({:5.2},{:5.2}) h {:5.0} v {:4.2} drive {:?} out {:?}", s.secs(), r.x, r.y, r.heading_deg(), r.speed(), r.drive, s.rovers[0].brain.out);
             }
         }
-        eprintln!("{:?} {:.1}", s.outcome, s.secs());
+        let charges: Vec<String> = s.rovers.iter().map(|e| format!("{} {:.0}", e.design.name, e.rover.charge)).collect();
+        eprintln!("{:?} {:.1} {}", s.outcome, s.secs(), charges.join(" / "));
     }
 }

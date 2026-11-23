@@ -1,5 +1,6 @@
 //! What is on screen and what every key does there.
 
+use crate::campaign;
 use crate::challenge::{self, Goal};
 use crate::design::{self, BENCH_H, BENCH_W, Design};
 use crate::parts::{self, BOX_H, BOX_W, Kind};
@@ -12,6 +13,8 @@ use ratatui::layout::Rect;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
     Title,
+    League,
+    Story,
     Garage,
     Challenges,
     Library,
@@ -46,9 +49,11 @@ pub struct RunResult {
     pub stars: u8,
     pub best: bool,
     pub text: String,
+    /// This win is a league night won: Enter goes on with the story.
+    pub story: bool,
 }
 
-pub const TITLE_MENU: [&str; 6] = ["Wire a rover", "Garage", "Challenges", "Parts library", "How to play", "Quit"];
+pub const TITLE_MENU: [&str; 7] = ["The league", "Free play", "Wire a rover", "Garage", "Parts library", "How to play", "Quit"];
 pub const SPEEDS: [u32; 4] = [1, 2, 4, 8];
 
 pub struct App {
@@ -75,6 +80,12 @@ pub struct App {
     pub sel: usize,
     pub lib_sel: usize,
     pub help_scroll: u16,
+    /// League nights won, the night being played, and which half of its
+    /// story is on screen.
+    pub won: usize,
+    pub chapter: Option<usize>,
+    pub story_after: bool,
+    pub league_sel: usize,
     pub popup: Option<Popup>,
     pub msg: Option<(String, u32)>,
     pub exit: bool,
@@ -118,6 +129,10 @@ impl App {
             sel: 0,
             lib_sel: 0,
             help_scroll: 0,
+            won: if demo { 3 } else { campaign::load() },
+            chapter: None,
+            story_after: false,
+            league_sel: 0,
             popup: None,
             msg: None,
             exit: false,
@@ -200,6 +215,9 @@ impl App {
         if s == Screen::Challenges {
             self.sel = self.ch;
         }
+        if s == Screen::League {
+            self.league_sel = self.league_sel.min(self.won.min(campaign::CHAPTERS.len() - 1));
+        }
         if s == Screen::Title {
             self.sel = 0;
         }
@@ -240,17 +258,32 @@ impl App {
         let secs = sim.secs();
         let r = match sim.outcome {
             Outcome::Won(_) => {
-                let stars = ch.stars(secs);
-                let best = !self.demo && self.records.offer(ch.id, secs, &self.design.name);
+                let stars = ch.stars(secs, sim.rovers[0].rover.charge);
+                let best = !self.demo && self.records.offer(ch.id, secs, stars, &self.design.name);
+                let them = sim.rovers.get(1).map(|e| e.design.name.clone()).unwrap_or_default();
                 let what = match ch.goal {
-                    Goal::Race => "Lap done",
-                    Goal::Maze => "Out through the hatch",
-                    Goal::Sumo => "Tumbler is out of the ring",
+                    Goal::Race => "Lap done".to_string(),
+                    Goal::Maze => "Out through the hatch".to_string(),
+                    Goal::Sumo => format!("{them} is out of the ring"),
+                    Goal::Battle if sim.rovers.get(1).is_some_and(|e| e.rover.stalled.is_some()) => format!("{them} stalls"),
+                    Goal::Battle => "More charge left at the bell".to_string(),
                 };
-                RunResult { won: true, secs, stars, best, text: format!("{what} in {secs:.2} s") }
+                let story = self.chapter.is_some_and(|c| campaign::CHAPTERS[c].challenge == ch.id);
+                if let Some(c) = self.chapter
+                    && story
+                    && c == self.won
+                {
+                    self.won += 1;
+                    if !self.demo {
+                        campaign::save(self.won);
+                    }
+                    log::info!("league night {} won", c + 1);
+                }
+                RunResult { won: true, secs, stars, best, text: format!("{what} in {secs:.2} s"), story }
             }
-            Outcome::Lost(why) => RunResult { won: false, secs, stars: 0, best: false, text: format!("Not this time: {why}") },
-            Outcome::Draw => RunResult { won: false, secs, stars: 0, best: false, text: "Time! Both rovers still on the ice".into() },
+            Outcome::Lost(why) => RunResult { won: false, secs, stars: 0, best: false, text: format!("Not this time: {why}"), story: false },
+            Outcome::Draw if ch.goal == Goal::Battle => RunResult { won: false, secs, stars: 0, best: false, text: "A draw: nobody comes out ahead".into(), story: false },
+            Outcome::Draw => RunResult { won: false, secs, stars: 0, best: false, text: "Time! Both rovers still on the ice".into(), story: false },
             Outcome::Running => return,
         };
         log::info!("run over: {} ({:.2} s, {} stars)", r.text, r.secs, r.stars);
@@ -290,6 +323,8 @@ impl App {
         }
         match self.screen {
             Screen::Title => self.title_key(k),
+            Screen::League => self.league_key(k),
+            Screen::Story => self.story_key(k),
             Screen::Garage => self.garage_key(k),
             Screen::Challenges => self.challenges_key(k),
             Screen::Library => self.library_key(k),
@@ -332,11 +367,12 @@ impl App {
         }
         match k.code {
             KeyCode::Enter | KeyCode::Char(' ') => match self.sel {
-                0 => self.go(Screen::Bench),
-                1 => self.go(Screen::Garage),
-                2 => self.go(Screen::Challenges),
-                3 => self.go(Screen::Library),
-                4 => self.go(Screen::Help),
+                0 => self.go(Screen::League),
+                1 => self.go(Screen::Challenges),
+                2 => self.go(Screen::Bench),
+                3 => self.go(Screen::Garage),
+                4 => self.go(Screen::Library),
+                5 => self.go(Screen::Help),
                 _ => self.exit = true,
             },
             KeyCode::Char('w') => self.go(Screen::Bench),
@@ -345,6 +381,56 @@ impl App {
             KeyCode::Char('l') => self.go(Screen::Library),
             KeyCode::Char('?') | KeyCode::F(1) => self.go(Screen::Help),
             KeyCode::Esc | KeyCode::Char('q') => self.exit = true,
+            _ => {}
+        }
+    }
+
+    fn league_key(&mut self, k: KeyEvent) {
+        let n = campaign::CHAPTERS.len();
+        if Self::list_nav(&mut self.league_sel, n, &k) {
+            return;
+        }
+        match k.code {
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if self.league_sel <= self.won {
+                    self.chapter = Some(self.league_sel);
+                    self.story_after = false;
+                    self.go(Screen::Story);
+                } else {
+                    self.say("That night is still ahead: win the ones before it first");
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => self.go(Screen::Title),
+            _ => {}
+        }
+    }
+
+    fn story_key(&mut self, k: KeyEvent) {
+        let Some(c) = self.chapter else {
+            self.go(Screen::League);
+            return;
+        };
+        match k.code {
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if self.story_after {
+                    self.story_after = false;
+                    self.chapter = None;
+                    self.league_sel = (c + 1).min(campaign::CHAPTERS.len() - 1);
+                    self.go(Screen::League);
+                } else {
+                    self.ch = challenge::by_id(campaign::CHAPTERS[c].challenge).unwrap_or(0);
+                    self.save();
+                    self.go(Screen::Bench);
+                    self.say(format!("Night {}: {}. Wire your rover, then r to run", c + 1, challenge::ALL[self.ch].name));
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                if !self.story_after {
+                    self.chapter = None;
+                }
+                self.story_after = false;
+                self.go(Screen::League);
+            }
             _ => {}
         }
     }
@@ -393,10 +479,12 @@ impl App {
         match k.code {
             KeyCode::Enter => {
                 self.ch = self.sel;
+                self.chapter = None;
                 self.save();
                 self.go(Screen::Bench);
             }
             KeyCode::Char('r') => {
+                self.chapter = None;
                 self.ch = self.sel;
                 self.go(Screen::Bench);
                 self.run();
@@ -513,6 +601,7 @@ impl App {
                 KeyCode::Char('u') | KeyCode::Char('z') => self.undo(),
                 KeyCode::Char('r') | KeyCode::F(5) => self.run(),
                 KeyCode::Char('c') => {
+                    self.chapter = None;
                     self.ch = (self.ch + 1) % challenge::ALL.len();
                     self.save();
                     self.say(format!("Challenge: {}", challenge::ALL[self.ch].name));
@@ -651,6 +740,11 @@ impl App {
         if self.result.is_some() {
             match k.code {
                 KeyCode::Char('r') | KeyCode::F(5) => self.run(),
+                KeyCode::Enter | KeyCode::Char(' ') if self.result.as_ref().is_some_and(|r| r.story) => {
+                    self.stop();
+                    self.story_after = true;
+                    self.go(Screen::Story);
+                }
                 KeyCode::Enter | KeyCode::Esc | KeyCode::Char(' ') | KeyCode::Char('q') => self.stop(),
                 KeyCode::Tab => self.arena_view = !self.arena_view,
                 _ => {}
@@ -1057,5 +1151,33 @@ mod tests {
         assert!(app.design.wires.len() < wires);
         key(&mut app, KeyCode::Char('u'));
         assert!(app.design.part(p.id).is_some());
+    }
+
+    #[test]
+    fn a_league_night_from_story_to_story() {
+        let mut app = App::new(false);
+        assert_eq!(app.won, 0);
+        app.screen = Screen::League;
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::League, "night 2 is still locked");
+        key(&mut app, KeyCode::Up);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!((app.screen, app.chapter, app.story_after), (Screen::Story, Some(0), false));
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Bench);
+        assert_eq!(challenge::ALL[app.ch].id, "ring-hall");
+        app.design = Design::from_text(design::COMET).unwrap();
+        key(&mut app, KeyCode::Char('r'));
+        for _ in 0..4000 {
+            app.tick();
+        }
+        let r = app.result.clone().expect("the run ended");
+        assert!(r.won && r.story);
+        assert_eq!(app.won, 1);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!((app.screen, app.story_after), (Screen::Story, true));
+        key(&mut app, KeyCode::Enter);
+        assert_eq!((app.screen, app.league_sel, app.chapter), (Screen::League, 1, None));
     }
 }

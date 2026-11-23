@@ -7,16 +7,22 @@ pub enum Kind {
     Whisker,
     Ranger,
     Compass,
+    Radar,
+    Gauge,
     And,
     Or,
     Not,
     Compare,
     Timer,
     Toggle,
+    Counter,
+    Memory,
     Number,
     TrackLeft,
     TrackRight,
     Gyro,
+    PelletGun,
+    Lobber,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,6 +30,7 @@ pub enum Category {
     Sensor,
     Logic,
     Drive,
+    Weapon,
 }
 
 impl Category {
@@ -32,6 +39,7 @@ impl Category {
             Category::Sensor => "Sensors",
             Category::Logic => "Logic",
             Category::Drive => "Drive",
+            Category::Weapon => "Weapons",
         }
     }
 }
@@ -76,22 +84,29 @@ impl Mount {
 
 pub const COMPASS_MODES: [&str; 3] = ["heading", "bearing", "distance"];
 pub const COMPARE_MODES: [&str; 3] = [">", "<", "="];
+pub const RADAR_MODES: [&str; 2] = ["bearing", "distance"];
 
-pub const ALL: [Kind; 14] = [
+pub const ALL: [Kind; 20] = [
     Kind::Bumper,
     Kind::Whisker,
     Kind::Ranger,
     Kind::Compass,
+    Kind::Radar,
+    Kind::Gauge,
     Kind::And,
     Kind::Or,
     Kind::Not,
     Kind::Compare,
     Kind::Timer,
     Kind::Toggle,
+    Kind::Counter,
+    Kind::Memory,
     Kind::Number,
     Kind::TrackLeft,
     Kind::TrackRight,
     Kind::Gyro,
+    Kind::PelletGun,
+    Kind::Lobber,
 ];
 
 /// Every part box on the bench is this big, borders included.
@@ -118,16 +133,22 @@ impl Kind {
             Kind::Whisker => "Whisker",
             Kind::Ranger => "Ranger",
             Kind::Compass => "Compass",
+            Kind::Radar => "Radar",
+            Kind::Gauge => "Gauge",
             Kind::And => "AND",
             Kind::Or => "OR",
             Kind::Not => "NOT",
             Kind::Compare => "Compare",
             Kind::Timer => "Timer",
             Kind::Toggle => "Toggle",
+            Kind::Counter => "Counter",
+            Kind::Memory => "Memory",
             Kind::Number => "Number",
             Kind::TrackLeft => "Left track",
             Kind::TrackRight => "Right track",
             Kind::Gyro => "Gyro",
+            Kind::PelletGun => "Pellet gun",
+            Kind::Lobber => "Lobber",
         }
     }
 
@@ -138,16 +159,22 @@ impl Kind {
             Kind::Whisker => "whisker",
             Kind::Ranger => "ranger",
             Kind::Compass => "compass",
+            Kind::Radar => "radar",
+            Kind::Gauge => "gauge",
             Kind::And => "and",
             Kind::Or => "or",
             Kind::Not => "not",
             Kind::Compare => "compare",
             Kind::Timer => "timer",
             Kind::Toggle => "toggle",
+            Kind::Counter => "counter",
+            Kind::Memory => "memory",
             Kind::Number => "number",
             Kind::TrackLeft => "track-left",
             Kind::TrackRight => "track-right",
             Kind::Gyro => "gyro",
+            Kind::PelletGun => "pellet-gun",
+            Kind::Lobber => "lobber",
         }
     }
 
@@ -157,7 +184,8 @@ impl Kind {
 
     pub fn category(self) -> Category {
         match self {
-            Kind::Bumper | Kind::Whisker | Kind::Ranger | Kind::Compass => Category::Sensor,
+            Kind::Bumper | Kind::Whisker | Kind::Ranger | Kind::Compass | Kind::Radar | Kind::Gauge => Category::Sensor,
+            Kind::PelletGun | Kind::Lobber => Category::Weapon,
             Kind::TrackLeft | Kind::TrackRight | Kind::Gyro => Category::Drive,
             _ => Category::Logic,
         }
@@ -168,6 +196,10 @@ impl Kind {
             Kind::And | Kind::Or | Kind::Compare => &["a", "b"],
             Kind::Gyro => &["right", "left"],
             Kind::TrackLeft | Kind::TrackRight => &["fwd", "back"],
+            Kind::Counter => &["in", "reset"],
+            Kind::Memory => &["data", "store"],
+            Kind::Lobber => &["fire", "range"],
+            Kind::PelletGun => &["fire"],
             Kind::Not | Kind::Timer | Kind::Toggle => &["in"],
             _ => &[],
         }
@@ -190,6 +222,7 @@ impl Kind {
         match self {
             Kind::Compass => &COMPASS_MODES,
             Kind::Compare => &COMPARE_MODES,
+            Kind::Radar => &RADAR_MODES,
             _ => &[],
         }
     }
@@ -203,6 +236,7 @@ impl Kind {
             Kind::Number => v("value", "", 1.0, -999.0, 999.0, 1.0),
             Kind::TrackLeft | Kind::TrackRight => v("power", "%", 60.0, -100.0, 100.0, 5.0),
             Kind::Gyro => v("power", "%", 100.0, -100.0, 100.0, 5.0),
+            Kind::Lobber => v("range", "m", 4.0, LOB_MIN, LOB_MAX, 0.5),
             _ => None,
         }
     }
@@ -221,16 +255,22 @@ impl Kind {
             Kind::Whisker => "1 when anything is within reach",
             Kind::Ranger => "metres to the nearest thing ahead",
             Kind::Compass => "heading, or bearing and distance to the beacon",
+            Kind::Radar => "bearing or distance to the nearest rover",
+            Kind::Gauge => "the rover's own charge, 0 to 100",
             Kind::And => "on when a and b are both on",
             Kind::Or => "on when a or b is on",
             Kind::Not => "1 when its input is off",
             Kind::Compare => "1 when a > b, a < b or a = b",
             Kind::Timer => "holds 1 for a while after its input turns on",
             Kind::Toggle => "flips between 0 and 1 each time its input turns on",
+            Kind::Counter => "counts each time its input turns on",
+            Kind::Memory => "keeps the number it was last told to store",
             Kind::Number => "always gives its value",
             Kind::TrackLeft => "drives the left side; turns the rover right",
             Kind::TrackRight => "drives the right side; turns the rover left",
             Kind::Gyro => "spins the rover right or left on the spot",
+            Kind::PelletGun => "fires frozen pellets straight ahead",
+            Kind::Lobber => "lobs a slush ball over walls to a set range",
         }
     }
 
@@ -258,6 +298,24 @@ impl Kind {
             Kind::Timer => {
                 "When its input turns on, gives 1 for the hold time, then 0 until the input turns on again. Good for backing away from a wall for half a second."
             }
+            Kind::Radar => {
+                "A spinning dish on the roof that finds the nearest other rover, through walls and all. Bearing gives -180 to 180: how far that rover is to the right of the nose. Distance gives metres to it, or 99 when there is nobody else about."
+            }
+            Kind::Gauge => {
+                "Reads the rover's own charge, 100 when it starts. In a battle every hit drains some, and at 0 the rover stalls where it stands. Wire it to a compare to know when to back away."
+            }
+            Kind::Counter => {
+                "Counts up by one each time in turns on, and goes back to 0 whenever reset is on. Count bumps, count laps, or wire it to a compare to do something on the third time."
+            }
+            Kind::Memory => {
+                "While store is on, it takes whatever number comes into data and gives it out; when store goes off it keeps giving that number until told otherwise. Remember the bearing of the last thing you saw."
+            }
+            Kind::PelletGun => {
+                "Fires a frozen pellet straight off the nose whenever fire is on and it has reloaded, twice a second. Pellets fly 7 metres a second for up to 8 metres, stop at walls, and knock 8 off the charge of any rover they hit. Its output is 1 while it is loaded."
+            }
+            Kind::Lobber => {
+                "Throws a ball of slush high over walls to land at a set range ahead, between 1.5 and 8 metres; wire a distance into range to aim it. It splashes everything within a metre of where it lands for 20 charge, and needs two seconds to reload. Its output is 1 while it is loaded."
+            }
             Kind::Toggle => "Starts at 0 and flips between 0 and 1 every time its input turns on. A one-bit memory.",
             Kind::Number => "Gives its value, always. Wire it to a track to keep the rover moving.",
             Kind::TrackLeft => {
@@ -272,6 +330,10 @@ impl Kind {
         }
     }
 }
+
+/// The lobber's shortest and longest throw, in metres.
+pub const LOB_MIN: f64 = 1.5;
+pub const LOB_MAX: f64 = 8.0;
 
 /// How many of each part one Mule chassis holds.
 pub const SENSOR_SLOTS: usize = 8;

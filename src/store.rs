@@ -104,10 +104,10 @@ pub fn delete(stem: &str) {
     }
 }
 
-/// The best result per challenge: seconds and the rover that did it.
+/// The best result per challenge: seconds, stars and the rover that did it.
 #[derive(Default, Clone)]
 pub struct Records {
-    pub best: Vec<(String, f64, String)>,
+    pub best: Vec<(String, f64, u8, String)>,
 }
 
 impl Records {
@@ -115,32 +115,40 @@ impl Records {
         let mut r = Records::default();
         let Some(text) = state_dir().and_then(|d| std::fs::read_to_string(d.join("records.txt")).ok()) else { return r };
         for line in text.lines() {
+            // "id secs sN rover", or from 0.1.0 "id secs rover"
             let mut w = line.splitn(3, ' ');
-            if let (Some(id), Some(secs), Some(rover)) = (w.next(), w.next(), w.next())
+            if let (Some(id), Some(secs), Some(rest)) = (w.next(), w.next(), w.next())
                 && let Ok(secs) = secs.parse::<f64>()
             {
-                r.best.push((id.to_string(), secs, rover.to_string()));
+                let (stars, rover) = match rest.split_once(' ') {
+                    Some((s, rover)) if s.len() == 2 && s.starts_with('s') && s[1..].parse::<u8>().is_ok() => (s[1..].parse::<u8>().unwrap_or(1), rover),
+                    _ => (crate::challenge::by_id(id).map(|c| crate::challenge::ALL[c].stars(secs, 100.0)).unwrap_or(1), rest),
+                };
+                r.best.push((id.to_string(), secs, stars.clamp(1, 3), rover.to_string()));
             }
         }
         r
     }
 
-    pub fn get(&self, id: &str) -> Option<(f64, &str)> {
-        self.best.iter().find(|b| b.0 == id).map(|b| (b.1, b.2.as_str()))
+    /// Seconds, stars and rover of the best win.
+    pub fn get(&self, id: &str) -> Option<(f64, u8, &str)> {
+        self.best.iter().find(|b| b.0 == id).map(|b| (b.1, b.2, b.3.as_str()))
     }
 
-    /// Records a win; true when it beats the old best.
-    pub fn offer(&mut self, id: &str, secs: f64, rover: &str) -> bool {
+    /// Records a win; true when it beats the old best (more stars, or as
+    /// many stars sooner).
+    pub fn offer(&mut self, id: &str, secs: f64, stars: u8, rover: &str) -> bool {
         match self.best.iter_mut().find(|b| b.0 == id) {
-            Some(b) if b.1 <= secs => return false,
+            Some(b) if (b.2, -b.1) >= (stars, -secs) => return false,
             Some(b) => {
                 b.1 = secs;
-                b.2 = rover.to_string();
+                b.2 = stars;
+                b.3 = rover.to_string();
             }
-            None => self.best.push((id.to_string(), secs, rover.to_string())),
+            None => self.best.push((id.to_string(), secs, stars, rover.to_string())),
         }
         if let Some(d) = state_dir() {
-            let text: String = self.best.iter().map(|(i, s, r)| format!("{i} {s:.3} {r}\n")).collect();
+            let text: String = self.best.iter().map(|(i, s, n, r)| format!("{i} {s:.3} s{n} {r}\n")).collect();
             let _ = std::fs::write(d.join("records.txt"), text);
         }
         true
@@ -198,9 +206,11 @@ mod tests {
     #[test]
     fn records_keep_the_best() {
         let mut r = Records::default();
-        assert!(r.offer("puck", 20.0, "A"));
-        assert!(!r.offer("puck", 25.0, "B"));
-        assert!(r.offer("puck", 10.0, "C"));
-        assert_eq!(r.get("puck"), Some((10.0, "C")));
+        assert!(r.offer("puck", 20.0, 2, "A"));
+        assert!(!r.offer("puck", 25.0, 2, "B"));
+        assert!(r.offer("puck", 10.0, 2, "C"));
+        assert!(r.offer("puck", 30.0, 3, "D"));
+        assert!(!r.offer("puck", 5.0, 2, "E"));
+        assert_eq!(r.get("puck"), Some((30.0, 3, "D")));
     }
 }

@@ -2,6 +2,7 @@
 //! wiring bench and the arena.
 
 use crate::app::{App, Mode, Popup, RunResult, SPEEDS, Screen, TITLE_MENU};
+use crate::campaign;
 use crate::challenge::{self, Goal};
 use crate::design::{BENCH_H, BENCH_W, Part};
 use crate::geom;
@@ -37,6 +38,7 @@ fn cat_color(c: Category) -> Color {
         Category::Sensor => Color::Rgb(90, 205, 215),
         Category::Logic => Color::Rgb(185, 160, 255),
         Category::Drive => Color::Rgb(255, 160, 85),
+        Category::Weapon => Color::Rgb(255, 120, 150),
     }
 }
 
@@ -77,6 +79,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     match app.screen {
         Screen::Title => title(f, app, area),
+        Screen::League => league(f, app, area),
+        Screen::Story => story(f, app, area),
         Screen::Garage => garage(f, app, area),
         Screen::Challenges => challenges(f, app, area),
         Screen::Library => library(f, app, area),
@@ -209,16 +213,80 @@ fn title(f: &mut Frame, app: &App, area: Rect) {
         put(buf, area, x, y0 + i as i32, l, Style::default().fg(ICE).add_modifier(Modifier::BOLD));
     }
     put(buf, area, x, y0 + 5, "Robot rovers, wired by hand, on the ice of Europa", Style::default().fg(DIM));
-    let my = y0 + 8;
+    let my = y0 + 7;
+    let gap = if area.height >= 30 { 2 } else { 1 };
     for (i, item) in TITLE_MENU.iter().enumerate() {
         let sel = i == app.sel;
         let style = if sel { Style::default().fg(Color::Black).bg(AMBER) } else { Style::default().fg(TEXT) };
-        put(buf, area, x, my + i as i32 * 2, &format!(" {}{item} ", if sel { "▸ " } else { "  " }), style);
+        put(buf, area, x, my + i as i32 * gap, &format!(" {}{item} ", if sel { "▸ " } else { "  " }), style);
     }
     let ch = &challenge::ALL[app.ch];
     let note = format!("Rover: {}   Challenge: {}", app.design.name, ch.name);
     put(buf, area, x, area.y as i32 + area.height as i32 - 2, &note, Style::default().fg(DIM));
     put(buf, area, x, area.y as i32 + area.height as i32 - 1, "↑↓ choose   Enter go   Q quit", Style::default().fg(FAINT));
+}
+
+// ------------------------------------------------------------- league
+
+fn league(f: &mut Frame, app: &App, area: Rect) {
+    let [main, foot] = Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
+    let [list, side] = Layout::horizontal([Constraint::Length(36), Constraint::Min(20)]).areas(main);
+    let mut lines = vec![Line::from(Span::styled("A first season on Conamara Station", Style::default().fg(DIM))), Line::from("")];
+    for (i, c) in campaign::CHAPTERS.iter().enumerate() {
+        let sel = i == app.league_sel;
+        let (mark, fg) = if i < app.won {
+            ("✓", GOOD)
+        } else if i == app.won {
+            ("▸", AMBER)
+        } else {
+            ("·", FAINT)
+        };
+        let style = if sel { Style::default().bg(Color::Rgb(40, 60, 85)).add_modifier(Modifier::BOLD) } else { Style::default() };
+        let st = challenge::by_id(c.challenge).and_then(|k| app.records.get(challenge::ALL[k].id)).map(|b| stars(b.1)).unwrap_or_default();
+        let name = if i <= app.won { c.title } else { "?" };
+        lines.push(Line::from(vec![Span::styled(format!(" {mark} "), style.fg(fg)), Span::styled(format!("Night {}  {:<17}", i + 1, name), style.fg(if i <= app.won { TEXT } else { FAINT })), Span::styled(st, style.fg(AMBER))]));
+    }
+    if app.won >= campaign::CHAPTERS.len() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(" The notebook is yours. Same time tomorrow.", Style::default().fg(GOOD))));
+    }
+    f.render_widget(Paragraph::new(lines).block(frame_block("The league")), list);
+    let i = app.league_sel;
+    let c = &campaign::CHAPTERS[i];
+    let mut info = Vec::new();
+    if i <= app.won {
+        let ch = challenge::by_id(c.challenge).map(|k| &challenge::ALL[k]);
+        info.push(Line::from(Span::styled(format!("Night {}: {}", i + 1, c.title), Style::default().fg(ICE).add_modifier(Modifier::BOLD))));
+        if let Some(ch) = ch {
+            info.push(Line::from(Span::styled(format!("{}: {}", ch.name, ch.tagline), Style::default().fg(AMBER))));
+            info.push(Line::from(""));
+            info.push(Line::from(ch.brief));
+        }
+    } else {
+        info.push(Line::from(Span::styled("Still ahead", Style::default().fg(DIM))));
+        info.push(Line::from(""));
+        info.push(Line::from("Win the nights before this one and Ines will tell you where to be."));
+    }
+    f.render_widget(Paragraph::new(info).wrap(Wrap { trim: true }).block(frame_block("Tonight")), side);
+    keys_line(f, foot, &[("↑↓", "choose"), ("Enter", "play the night"), ("Esc", "back")], app.msg.as_ref().map(|m| m.0.as_str()));
+}
+
+fn story(f: &mut Frame, app: &App, area: Rect) {
+    let Some(i) = app.chapter else { return };
+    let c = &campaign::CHAPTERS[i];
+    let [main, foot] = Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
+    let art_w = if main.width >= 96 { main.width / 3 } else { 0 };
+    let [text, art] = Layout::horizontal([Constraint::Min(40), Constraint::Length(art_w)]).areas(main);
+    if art_w > 0 {
+        jupiter(f.buffer_mut(), art);
+    }
+    let title = if app.story_after { format!("Night {}: {}, after", i + 1, c.title) } else { format!("Night {}: {}", i + 1, c.title) };
+    let body = if app.story_after { c.after } else { c.before };
+    let inner = text.inner(ratatui::layout::Margin::new(2, 1));
+    f.render_widget(frame_block(&title), text);
+    f.render_widget(Paragraph::new(body).style(Style::default().fg(TEXT)).wrap(Wrap { trim: false }), inner);
+    let keys: &[(&str, &str)] = if app.story_after { &[("Enter", "back to the league")] } else { &[("Enter", "to the bench"), ("Esc", "not tonight")] };
+    keys_line(f, foot, keys, None);
 }
 
 // -------------------------------------------------------------- frames
@@ -293,7 +361,7 @@ fn challenges(f: &mut Frame, app: &App, area: Rect) {
     for (i, c) in challenge::ALL.iter().enumerate() {
         let sel = i == app.sel;
         let best = app.records.get(c.id);
-        let st = best.map(|(s, _)| stars(c.stars(s))).unwrap_or_else(|| stars(0));
+        let st = stars(best.map(|b| b.1).unwrap_or(0));
         let style = if sel { Style::default().bg(Color::Rgb(40, 60, 85)).add_modifier(Modifier::BOLD) } else { Style::default() };
         lines.push(Line::from(vec![Span::styled(format!(" {:<24}", c.name), style.fg(TEXT)), Span::styled(st, style.fg(AMBER))]));
         lines.push(Line::from(Span::styled(format!("   {}", c.tagline), Style::default().fg(DIM))));
@@ -304,9 +372,12 @@ fn challenges(f: &mut Frame, app: &App, area: Rect) {
     let mut info = vec![Line::from(Span::styled(c.name, Style::default().fg(ICE).add_modifier(Modifier::BOLD))), Line::from(""), Line::from(c.brief), Line::from("")];
     info.push(Line::from(vec![Span::styled("Beacon   ", Style::default().fg(DIM)), Span::raw(c.beacon)]));
     info.push(Line::from(vec![Span::styled("Clock    ", Style::default().fg(DIM)), Span::raw(format!("{} s", c.limit))]));
-    info.push(Line::from(vec![Span::styled("Stars    ", Style::default().fg(DIM)), Span::raw(format!("★ finish   ★★ under {} s   ★★★ under {} s", c.par[0], c.par[1]))]));
+    info.push(Line::from(vec![Span::styled("Stars    ", Style::default().fg(DIM)), Span::raw({
+        let [two, three] = c.par_text();
+        format!("★ {}   ★★ {two}   ★★★ {three}", if c.goal == Goal::Battle { "win" } else { "finish" })
+    })]));
     match app.records.get(c.id) {
-        Some((s, who)) => info.push(Line::from(vec![Span::styled("Best     ", Style::default().fg(DIM)), Span::styled(format!("{s:.2} s by {who}"), Style::default().fg(AMBER))])),
+        Some((s, n, who)) => info.push(Line::from(vec![Span::styled("Best     ", Style::default().fg(DIM)), Span::styled(format!("{} in {s:.2} s by {who}", stars(n)), Style::default().fg(AMBER))])),
         None => info.push(Line::from(vec![Span::styled("Best     ", Style::default().fg(DIM)), Span::raw("nobody yet")])),
     }
     f.render_widget(Paragraph::new(info).wrap(Wrap { trim: true }).block(frame_block("Challenge")), side);
@@ -353,6 +424,7 @@ fn library(f: &mut Frame, app: &App, area: Rect) {
         Category::Sensor => format!("the Mule has {} sensor slots", parts::SENSOR_SLOTS),
         Category::Logic => format!("the Mule's logic board holds {}", parts::LOGIC_SLOTS),
         Category::Drive => "one per rover, fitted on every Mule".to_string(),
+        Category::Weapon => "one mount for each weapon on the Mule's nose".to_string(),
     };
     info.push(Line::from(vec![Span::styled("Fitting  ", Style::default().fg(DIM)), Span::raw(slots)]));
     f.render_widget(Paragraph::new(info).wrap(Wrap { trim: true }), text);
@@ -383,8 +455,11 @@ THE ARENA
   Tab    the live bench: every wire lit with its signal as the rover runs
   r      run again                              Esc  stop and rewire
 
+BATTLES
+  Every rover starts with 100 charge. A pellet takes 5, a slush ball 15, and a rover at 0 stalls where it stands. Battle stars come from the charge you have left when you win. The radar finds the nearest rover through walls; the gauge reads your own charge.
+
 FIRST STEPS
-  Homer waits in the garage. Run him in Ring Hall (r), watch, then try more power on the tracks, a compass in distance mode to slow for corners, or a ranger to see walls coming.
+  The league on the title screen is a season of seven nights, each a story and a challenge; free play opens every challenge at once. Homer waits in the garage. Run him in Ring Hall (r), watch, then try more power on the tracks, a compass in distance mode to slow for corners, or a ranger to see walls coming.
 
 Rovers are plain text files in the state folder (rovers/*.rover); copy them, share them, edit them by hand.";
 
@@ -585,8 +660,8 @@ fn bench_side(f: &mut Frame, app: &App, area: Rect) {
     let ch = &challenge::ALL[app.ch];
     l.push(Line::from(Span::styled(ch.name, Style::default().fg(AMBER).add_modifier(Modifier::BOLD))));
     l.push(Line::from(Span::styled(format!("beacon: {}", ch.beacon), Style::default().fg(DIM))));
-    if let Some((s, _)) = app.records.get(ch.id) {
-        l.push(Line::from(format!("best {s:.2} s {}", stars(ch.stars(s)))));
+    if let Some((s, n, _)) = app.records.get(ch.id) {
+        l.push(Line::from(format!("best {s:.2} s {}", stars(n))));
     }
     f.render_widget(Paragraph::new(l).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::LEFT).border_style(Style::default().fg(FAINT))), area);
 }
@@ -631,6 +706,27 @@ fn draw_map(buf: &mut Buffer, sim: &Sim, view: Rect) {
                 continue;
             }
             let (tx, ty) = (cx.div_euclid(TW), cy.div_euclid(TH));
+            if a.window.get((ty * a.w + tx) as usize).copied().unwrap_or(false) {
+                // the long window: night sky, and Jupiter's bands across the middle
+                let sky = Color::Rgb(10, 12, 26);
+                if cy % TH == TH - 1 {
+                    cell.set_char('▄').set_fg(WALL_EDGE).set_bg(sky);
+                } else {
+                    let span = mw as f64;
+                    let f = cx as f64 / span;
+                    if (0.35..0.65).contains(&f) {
+                        let bands = [Color::Rgb(225, 195, 150), Color::Rgb(185, 130, 90), Color::Rgb(235, 215, 180), Color::Rgb(200, 90, 60)];
+                        let k = ((f - 0.35) * 40.0) as usize;
+                        cell.set_char('▀').set_fg(bands[k % 3]).set_bg(bands[(k + 1) % 3]);
+                        if k == 7 {
+                            cell.set_bg(bands[3]);
+                        }
+                    } else {
+                        cell.set_char(if (cx * 7 + 3) % 11 == 0 { '·' } else { ' ' }).set_fg(DIM).set_bg(sky);
+                    }
+                }
+                continue;
+            }
             if a.solid(tx, ty) {
                 // walls: lit edge where they face open floor
                 let open_below = !a.solid(tx, ty + 1) && cy % TH == TH - 1;
@@ -699,13 +795,57 @@ fn draw_map(buf: &mut Buffer, sim: &Sim, view: Rect) {
         let (x1, y1) = to_dot(b.x1, b.y1);
         dots.line(x0, y0, x1, y1, Color::Rgb(150, 120, 60), 2);
     }
+    // pellets, with a short tail
+    for p in &sim.pellets {
+        let (x, y) = to_dot(p.x, p.y);
+        let (tx, ty) = to_dot(p.x - p.vx * 0.05, p.y - p.vy * 0.05);
+        dots.line(tx, ty, x, y, if p.owner == 0 { Color::Rgb(200, 245, 255) } else { Color::Rgb(255, 200, 170) }, 1);
+    }
+    // lobs: a shadow on the ground and the ball above it, highest midway
+    for l in &sim.lobs {
+        let t = l.t as f64 / l.flight as f64;
+        let (gx, gy) = (l.x0 + (l.x1 - l.x0) * t, l.y0 + (l.y1 - l.y0) * t);
+        let (sx, sy) = to_dot(gx, gy);
+        dots.set(sx as i32, sy as i32, DIM);
+        let lift = 4.0 * t * (1.0 - t) * 14.0;
+        let (bx, by) = (sx as i32, (sy - lift) as i32);
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            dots.set(bx + dx, by + dy, Color::Rgb(230, 240, 255));
+        }
+        let (tx, ty) = to_dot(l.x1, l.y1);
+        dots.set(tx as i32, ty as i32, Color::Rgb(150, 70, 70));
+    }
+    // splashes and sparks
+    for &(x, y, t, big) in &sim.splashes {
+        let age = sim.tick.saturating_sub(t) as f64;
+        let rmax = if big { crate::sim::LOB_SPLASH } else { 0.25 };
+        let rr = rmax * (age / 12.0).min(1.0);
+        if age > 18.0 {
+            continue;
+        }
+        let (cx, cy) = to_dot(x, y);
+        let n = if big { 24 } else { 8 };
+        for k in 0..n {
+            let a = k as f64 / n as f64 * geom::TAU;
+            dots.set((cx + geom::cos(a) * rr * DPM).round() as i32, (cy + geom::sin(a) * rr * DPM).round() as i32, if big { Color::Rgb(220, 235, 255) } else { AMBER });
+        }
+    }
     // rovers
     for (n, e) in sim.rovers.iter().enumerate() {
         let r = &e.rover;
         if r.fell.is_some_and(|t| sim.tick > t + 30) {
             continue;
         }
-        let col = if n == 0 { ME } else { THEM };
+        let flash = r.hit_at.is_some_and(|t| sim.tick < t + 6);
+        let col = if r.stalled.is_some() {
+            Color::Rgb(70, 80, 90)
+        } else if flash {
+            Color::Rgb(255, 255, 255)
+        } else if n == 0 {
+            ME
+        } else {
+            THEM
+        };
         let (cx, cy) = to_dot(r.x, r.y);
         let rad = RADIUS * DPM;
         let ri = rad.ceil() as i32 + 1;
@@ -758,12 +898,23 @@ fn arena_side(f: &mut Frame, app: &App, sim: &Sim, area: Rect) {
             let edge = |r: &crate::sim::Rover| rr - ((r.x - cx).powi(2) + (r.y - cy).powi(2)).sqrt();
             l.push(Line::from(vec![Span::styled("Edge   ", Style::default().fg(DIM)), Span::raw(format!("you {:.1} m", edge(r).max(0.0)))]));
             if let Some(o) = sim.rovers.get(1) {
-                l.push(Line::from(vec![Span::styled("       ", Style::default().fg(DIM)), Span::styled(format!("Tumbler {:.1} m", edge(&o.rover).max(0.0)), Style::default().fg(THEM))]));
+                l.push(Line::from(vec![Span::styled("       ", Style::default().fg(DIM)), Span::styled(format!("{} {:.1} m", o.design.name, edge(&o.rover).max(0.0)), Style::default().fg(THEM))]));
+            }
+        }
+        Goal::Battle => {
+            let w = (area.width as usize).saturating_sub(14).clamp(5, 13);
+            for (n, e) in sim.rovers.iter().enumerate() {
+                let c = e.rover.charge;
+                let filled = ((c / crate::sim::CHARGE) * w as f64).round() as usize;
+                let bar: String = "█".repeat(filled) + &"·".repeat(w - filled.min(w));
+                let name: String = if n == 0 { "You".to_string() } else { e.design.name.chars().take(8).collect() };
+                let col = if c < 30.0 { BAD } else if n == 0 { ME } else { THEM };
+                l.push(Line::from(vec![Span::styled(format!("{name:<9}"), Style::default().fg(DIM)), Span::styled(bar, Style::default().fg(col)), Span::raw(format!(" {c:.0}"))]));
             }
         }
     }
-    if let Some((s, _)) = app.records.get(ch.id) {
-        l.push(Line::from(vec![Span::styled("Best   ", Style::default().fg(DIM)), Span::raw(format!("{s:.2} s {}", stars(ch.stars(s))))]));
+    if let Some((s, n, _)) = app.records.get(ch.id) {
+        l.push(Line::from(vec![Span::styled("Best   ", Style::default().fg(DIM)), Span::raw(format!("{s:.2} s {}", stars(n)))]));
     }
     l.push(Line::from(""));
     l.push(Line::from(Span::styled(e.design.name.clone(), Style::default().fg(ME).add_modifier(Modifier::BOLD))));
@@ -811,8 +962,8 @@ fn result_card(f: &mut Frame, app: &App, r: &RunResult, area: Rect) {
     if r.won {
         l.push(Line::from(vec![Span::styled(stars(r.stars), Style::default().fg(AMBER)), Span::raw(if r.best { "   a new best!" } else { "" })]));
         let next = match r.stars {
-            1 => format!("Under {} s for two stars", ch.par[0]),
-            2 => format!("Under {} s for three", ch.par[1]),
+            1 => format!("{} {} for two stars", if ch.goal == Goal::Battle { "Win" } else { "Finish" }, ch.par_text()[0]),
+            2 => format!("{} {} for three", if ch.goal == Goal::Battle { "Win" } else { "Finish" }, ch.par_text()[1]),
             _ => "Hana will want to see that wiring".to_string(),
         };
         l.push(Line::from(Span::styled(next, Style::default().fg(DIM))));
@@ -820,7 +971,8 @@ fn result_card(f: &mut Frame, app: &App, r: &RunResult, area: Rect) {
         l.push(Line::from(Span::styled("Tab shows the wiring as it was when it ended.", Style::default().fg(DIM))));
     }
     l.push(Line::from(""));
-    l.push(Line::from(vec![Span::styled("Enter", Style::default().fg(AMBER)), Span::raw(" back to the bench   "), Span::styled("R", Style::default().fg(AMBER)), Span::raw(" run again")]));
+    let enter = if r.story { " the story goes on   " } else { " back to the bench   " };
+    l.push(Line::from(vec![Span::styled("Enter", Style::default().fg(AMBER)), Span::raw(enter), Span::styled("R", Style::default().fg(AMBER)), Span::raw(" run again")]));
     f.render_widget(Paragraph::new(l).block(frame_block(ch.name)).centered(), rect);
 }
 
@@ -828,7 +980,7 @@ fn popup(f: &mut Frame, app: &App, p: &Popup, area: Rect) {
     match p {
         Popup::Add { sel } => {
             let lib = crate::app::library();
-            let h = (lib.len() as u16 + 6).min(area.height);
+            let h = (lib.len() as u16 + 6).min(area.height.saturating_sub(2));
             let rect = centered(area, 70, h);
             f.render_widget(Clear, rect);
             let mut l = Vec::new();
@@ -847,7 +999,11 @@ fn popup(f: &mut Frame, app: &App, p: &Popup, area: Rect) {
                 let fg = if room { TEXT } else { FAINT };
                 l.push(Line::from(vec![Span::styled(format!("  {:<12}", k.name()), style.fg(fg)), Span::styled(k.summary(), Style::default().fg(DIM))]));
             }
-            f.render_widget(Paragraph::new(l).block(frame_block("Add a part")), rect);
+            // keep the chosen part in view
+            let at = lib.iter().take(*sel + 1).fold((0u16, None), |(n, last), k| (n + 1 + (last != Some(k.category())) as u16, Some(k.category()))).0;
+            let inner_h = rect.height.saturating_sub(2);
+            let scroll = at.saturating_sub(inner_h);
+            f.render_widget(Paragraph::new(l).scroll((scroll, 0)).block(frame_block("Add a part")), rect);
         }
         Popup::Edit { id, field, typed } => {
             let Some(part) = app.design.part(*id) else { return };
@@ -925,7 +1081,8 @@ mod tests {
     fn every_screen_draws_at_both_sizes() {
         for (w, h) in [(100, 30), (80, 24)] {
             let mut app = App::new(false);
-            for s in [Screen::Title, Screen::Garage, Screen::Challenges, Screen::Library, Screen::Help, Screen::Bench] {
+            app.chapter = Some(3);
+            for s in [Screen::Title, Screen::League, Screen::Story, Screen::Garage, Screen::Challenges, Screen::Library, Screen::Help, Screen::Bench] {
                 app.screen = s;
                 let text = screen_text(&mut app, w, h);
                 assert!(!text.trim().is_empty());
