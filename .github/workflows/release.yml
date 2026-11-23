@@ -1,0 +1,158 @@
+# Builds Icewire for the Asciiverse catalog: one archive per target, named
+# <id>-<target>.tar.gz (Linux, macOS) or .zip (Windows), plus a SHA256SUMS
+# file, attached to a GitHub release (hub/catalog/SCHEMA.md,
+# release.source = "github").
+#
+# On the pattern of tspace's. Tags look like v0.1.0. Icewire is pure Rust
+# with no sound or gamepad libraries, so Linux builds are static musl
+# binaries that run on any distribution. Each archive holds the binary at
+# the top, where av looks for it, with README.md and LICENSE.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to build and release"
+        required: true
+
+env:
+  ID: icewire
+  BIN: icewire
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup update stable && rustup default stable
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+          out=target/${{ matrix.target }}/release/$BIN
+          strip "$out"
+          file "$out"
+          # static: "statically linked" or "static-pie linked"
+          file "$out" | grep -E 'static(ally linked|-pie linked)'
+
+      - name: Test
+        run: cargo test --release --locked --target ${{ matrix.target }}
+
+      - name: Package for av
+        run: |
+          mkdir -p stage dist
+          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE stage/
+          tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        run: |
+          rustup update stable && rustup default stable
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/$BIN
+          file target/${{ matrix.target }}/release/$BIN
+
+      - name: Package
+        run: |
+          mkdir -p stage dist
+          cp target/${{ matrix.target }}/release/$BIN README.md LICENSE stage/
+          tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        shell: bash
+        run: |
+          rustup update stable && rustup default stable
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Test
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: cargo test --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p stage dist
+          cp target/${{ matrix.target }}/release/$BIN.exe README.md LICENSE stage/
+          (cd stage && 7z a -tzip "../dist/$ID-${{ matrix.target }}.zip" .)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Icewire $TAG" \
+                 --notes "Icewire $TAG for the Asciiverse catalog. Its README lists the controls."
+          gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber

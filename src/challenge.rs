@@ -59,7 +59,8 @@ The compass bearing always points at the next one.",
 frost on every rail. Somewhere at the far corner is the hatch to the \
 loading bay. Your compass knows exactly where it is. It knows nothing \
 about the shelves in between. Oskar swears his rover found it in under \
-two minutes.",
+three minutes, and the old hands only say: keep one side to the racks \
+and never let go.",
         goal: Goal::Maze,
         map: include_str!("../challenges/cold-stores.txt"),
         limit: 300.0,
@@ -75,7 +76,8 @@ two minutes.",
         tagline: "A ring on the pump room floor, and Tumbler",
         brief: "A circle scraped into the pump room floor and a bucket of \
 meltwater to make it slick. In the other corner waits Tumbler, Sami's \
-rover, which has never been pushed out by a newcomer. Push it over the \
+rover, which has never been pushed out by a newcomer. Sami runs its \
+tracks at eighty-five percent and says nobody needs more. Push it over the \
 edge of the ring. Stay inside yourself. The compass points at Tumbler, \
 and whiskers and rangers see the edge.",
         goal: Goal::Sumo,
