@@ -2,6 +2,7 @@
 //! it out on the ice of Europa.
 
 mod app;
+mod arrange;
 mod bot;
 mod brain;
 mod campaign;

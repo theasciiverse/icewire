@@ -95,6 +95,7 @@ play* opens every challenge.
 | Enter, e | set a part's mount, mode or value (arrows, or type a number) |
 | w | wire from the part under the cursor, then Enter on the part it feeds |
 | m | move a part |
+| A | arrange: every part in columns by signal flow, as few crossing wires as it can (u undoes) |
 | x, Delete | remove the part or wire under the cursor |
 | u | undo |
 | r, F5 | run |

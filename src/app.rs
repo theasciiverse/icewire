@@ -744,6 +744,7 @@ impl App {
                 KeyCode::Tab => self.jump(false),
                 KeyCode::BackTab => self.jump(true),
                 KeyCode::Char('a') | KeyCode::Insert => self.popup = Some(Popup::Add { sel: 0 }),
+                KeyCode::Char('A') => self.arrange(),
                 KeyCode::Enter | KeyCode::Char('e') => match self.under() {
                     Some(id) => self.edit(id),
                     None if k.code == KeyCode::Enter => self.popup = Some(Popup::Add { sel: 0 }),
@@ -791,6 +792,37 @@ impl App {
                 }
                 _ => {}
             },
+        }
+    }
+
+    /// Arranges the parts in columns by signal flow; u undoes it.
+    fn arrange(&mut self) {
+        if self.design.parts.is_empty() {
+            self.say("Nothing on the bench to arrange");
+            return;
+        }
+        self.checkpoint();
+        match crate::arrange::apply(&mut self.design) {
+            Some(cols) => {
+                if self.undo.last() == Some(&self.design) {
+                    self.undo.pop();
+                    self.say("Already arranged");
+                    return;
+                }
+                // the cursor goes to the first part, the view to the top left
+                if let Some(p) = self.design.parts.iter().min_by_key(|p| (p.x, p.y)) {
+                    self.cx = p.x + 1;
+                    self.cy = p.y + 1;
+                }
+                self.vx = 0;
+                self.vy = 0;
+                self.changed();
+                self.say(format!("Arranged in {cols} columns by signal flow; u undoes it"));
+            }
+            None => {
+                self.undo.pop();
+                self.say("Too many parts to arrange on the bench");
+            }
         }
     }
 

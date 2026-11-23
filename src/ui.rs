@@ -521,6 +521,8 @@ THE BENCH
   w               wire from the part under the cursor, then
                   move to the part it feeds and press Enter
   m               move a part (arrows, then Enter)
+  A               arrange: every part in columns by signal flow,
+                  sensors left, drive right, few crossings (u undoes)
   x, Delete       remove the part or wire under the cursor
   u               undo
   r, F5           run the rover in the challenge

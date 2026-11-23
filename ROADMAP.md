@@ -113,6 +113,16 @@ Every version ends with a report saying what to try first.
   Nothing is saved while it plays. A test plays the whole lesson and
   checks every lap time and star the captions promise.
 
+- [x] **Part boxes by category.** Sensors rounded, logic double, drive
+  heavy, weapons heavy top and bottom: parts tell apart by shape as well
+  as colour, and no box shares the wires' thin line.
+- [x] **Arrange (A).** The layered layout: sources left, each logic part
+  one column right of what feeds it (loops do not push), drive and
+  weapons in the last column in a fixed order; then barycentre sweeps and
+  neighbour swaps to cross as few wires as it can, counting crossings
+  geometrically with each wire ending on its input's row. Long chains wrap
+  into bands; a rover too big to arrange is left as it is. u undoes it.
+
 ## 1.0.0
 
 Waits on David playing it.
