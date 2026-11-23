@@ -156,3 +156,7 @@ jobs:
             || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Icewire $TAG" \
                  --notes "Icewire $TAG for the Asciiverse catalog. Its README lists the controls."
           gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber
+          # drop anything this run did not build (an earlier hand-made build)
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r a; do
+            [ -e "dist/$a" ] || gh release delete-asset "$TAG" "$a" -R "$GITHUB_REPOSITORY" --yes
+          done
