@@ -91,29 +91,15 @@ feeding conditionals feeding actuators, signal flow, state management), but
 it feels like building a machine rather than writing code. Understanding
 arrives through tinkering, not instruction.
 
-## Reference: TTRTS, the open bot port
+## The open bot port
 
-TTRTS, Marc Di Luzio's Tiny Terminal RTS (C++, 2014 to 2015,
-github.com/mdiluz/ttrts, archived; sample players in
-github.com/mdiluz/ttrts-players, Perl and Lua), is a small terminal game
-played entirely by programs. Each turn the game writes the state as a plain
-text file (`Turn_N.txt`: map size, walls, then one line per unit with
-owner, facing and position) and waits for one orders file per player
-(`Player_P_Turn_N.txt`: one `ORDER:<char> id:<unit>` line per unit, then
-`END`). All orders resolve at once, units leave walls behind as they move,
-and v0.4.0 carries the same text over TCP (port 11715, a one-line
-handshake, then state out and orders back) so a bot can be a network
-client. Its README sums it up: any user, program or cat that can read and
-write text files can play.
+Besides wired rovers and Lua, Icewire is meant to be playable by programs:
 
-What Icewire takes from it, as ideas only:
-
-- **An open bot port next to the wiring.** Besides wired rovers and Lua,
-  a rover can be driven by any outside program: Icewire writes the rover's
-  sensor readings as plain text lines each tick and reads actuator
-  commands back, over stdin/stdout of a child process (the default) or a
-  local socket. Any language can enter a rover in the league, which is
-  the TTRTS idea in Icewire's world.
+- **An open bot port next to the wiring.** A rover can be driven by any
+  outside program: Icewire writes the rover's sensor readings as plain
+  text lines each tick and reads actuator commands back, over
+  stdin/stdout of a child process (the default) or a local socket. Any
+  language can enter a rover in the league.
 - **A documented, versioned, line-based protocol**, with a header line
   that names the protocol version, so old bots keep working.
 - **Simultaneous resolution** for tournament mode: every rover's commands
@@ -121,12 +107,6 @@ What Icewire takes from it, as ideas only:
 - **Bot-vs-bot tournaments** run headless (`icewire --tournament`), with
   replays saved, as the natural endgame for players who outgrow the
   wiring.
-
-Rights: TTRTS has no licence on any branch (checked 2026-11-23), so none
-of its code, text or maps may be used. A licence request to Marc is
-drafted in `../ttrts/licence-request.md`; if he grants one, TTRTS can also
-be packaged as a catalog title of its own. Icewire needs nothing from it
-but the idea.
 
 ## Rights situation
 
@@ -150,7 +130,7 @@ David playing it
 Conceived 2026-07-02, scout camp. Renamed from RoverMind to Icewire, 2026-07-08.
 
 2026-11-23: assigned to rover as an original game (job 6 in
-`ASSIGNMENTS-2026-11-23.md`), with the TTRTS reference above added.
+`ASSIGNMENTS-2026-11-23.md`), with the open bot port above added.
 Icewire uses no MindRover name, text, art, component names or levels, so
 it does not wait on the CogniToy rights research; that research matters
 only if we ever want the MindRover name or content itself.
@@ -177,8 +157,7 @@ reaped on drop), `replay` (text replays of states, and their playback),
 `tournament` (`--tournament`), `arrange` (A on the bench: the layered layout by signal flow; its tests check no overlaps, every wire routed, no crossings on a scattered Comet), `lesson` (Watch and learn, `--learn`: a scripted lesson that types real keys into the game, with captions; its test plays it through and checks every lap time and star the captions state, so rerun it after any physics or bench change). `lua::tests` prove compiled Lua runs bit
 for bit like the wiring; keep `compile` in step with `brain` whenever a
 part changes. Bot process tests are Unix-only and clean up every child;
-keep it that way. The protocol is ours, written from the idea alone:
-never TTRTS's code or text.
+keep it that way. The protocol is ours.
 
 Balance is pinned by tests in `sim.rs`: Homer finishes Ring Hall with one
 star, raw power gets two, a gated or ranger-paced rover three; a
